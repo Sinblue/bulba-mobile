@@ -1,0 +1,14 @@
+{
+  "name": "妙蛙收藏查詢",
+  "short_name": "妙蛙查詢",
+  "description": "離線查詢自己的寶可夢卡收藏",
+  "lang": "zh-Hant",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f5f2",
+  "theme_color": "#276a47",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

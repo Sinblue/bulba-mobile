@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#276a47">
+  <title>妙蛙收藏查詢</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="title-row">
+      <h1>妙蛙收藏查詢</h1>
+      <label class="import-button">匯入資料<input id="file" type="file" accept=".json,application/json" hidden></label>
+    </div>
+    <p id="data-info" class="data-info">尚未匯入資料</p>
+    <div class="search-row">
+      <input id="search" class="search" type="search" inputmode="text" autocomplete="off" enterkeyhint="search"
+             placeholder="卡號／張數、代碼或卡名" aria-label="搜尋" disabled>
+      <button id="filter-toggle" class="filter-toggle" type="button" aria-expanded="false" aria-controls="filters" disabled>篩選</button>
+    </div>
+    <section id="filters" class="filters" aria-label="篩選與排序" hidden>
+      <label>狀態 <select id="f-status"></select></label>
+      <label>語言 <select id="f-language"></select></label>
+      <label>官方代碼 <select id="f-code"></select></label>
+      <label>妙蛙系列 <select id="f-bulba"><option value="">全部</option><option value="bulba">妙蛙系列</option><option value="other">其他</option></select></label>
+      <label>排序 <select id="f-sort"></select></label>
+      <button id="f-clear" class="clear-button" type="button">清除</button>
+      <p class="filter-note">有輸入搜尋字時，結果依相關度排序。</p>
+    </section>
+  </header>
+
+  <main>
+    <section id="welcome" class="welcome">
+      <h2>第一次使用</h2>
+      <ol>
+        <li>在電腦的收藏目錄按「匯出手機資料」，下載 <code>bulba_mobile_….json</code>。</li>
+        <li>把檔案傳到手機（雲端硬碟、LINE、USB 皆可）。</li>
+        <li>按右上「匯入資料」選擇該檔案。資料只存在這支手機的瀏覽器裡。</li>
+      </ol>
+      <p>匯入後即可離線查詢。</p>
+    </section>
+    <p id="hint" class="hint" hidden></p>
+    <p id="multi-note" class="multi-note" hidden>同卡號／張數出現在多個系列，請看卡面代碼確認是哪一張。</p>
+    <p id="empty" class="empty" hidden></p>
+    <div id="results"></div>
+    <p class="footer-actions"><button id="restore" class="text-button" type="button" hidden>還原上一份資料</button></p>
+  </main>
+
+  <dialog id="preview">
+    <form method="dialog">
+      <h2>確認匯入</h2>
+      <dl id="preview-stats"></dl>
+      <p class="preview-note">匯入後，目前的資料會保留為「上一份」，可以還原。</p>
+      <div class="dialog-actions">
+        <button value="cancel" class="secondary">取消</button>
+        <button value="confirm" id="confirm-import">確認匯入</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="detail" class="detail">
+    <div class="detail-header">
+      <strong id="detail-title"></strong>
+      <button id="detail-close" class="close-button" type="button" aria-label="關閉">×</button>
+    </div>
+    <div id="detail-body" class="detail-body"></div>
+  </dialog>
+
+  <dialog id="viewer" class="viewer" aria-label="卡圖">
+    <button id="viewer-close" class="viewer-close" type="button" aria-label="關閉">×</button>
+    <img id="viewer-image" alt="">
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
