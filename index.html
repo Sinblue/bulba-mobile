@@ -21,7 +21,10 @@
       <input id="search" class="search" type="search" inputmode="text" autocomplete="off" enterkeyhint="search"
              placeholder="卡號／張數、代碼或卡名" aria-label="搜尋" disabled>
       <button id="filter-toggle" class="filter-toggle" type="button" aria-expanded="false" aria-controls="filters" disabled>篩選</button>
+      <label id="scan-button" class="scan-button disabled" aria-label="拍照比對卡圖" title="拍照比對卡圖">📷<input id="scan" type="file" accept="image/*" capture="environment" hidden disabled></label>
+      <input id="scan-pick" type="file" accept="image/*" hidden disabled>
     </div>
+    <p id="scan-status" class="scan-status" hidden></p>
     <section id="filters" class="filters" aria-label="篩選與排序" hidden>
       <label>狀態 <select id="f-status"></select></label>
       <label>語言 <select id="f-language"></select></label>

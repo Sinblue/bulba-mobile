@@ -1,7 +1,9 @@
-# 妙蛙收藏查詢（手機第 0 階段）
+# 妙蛙收藏查詢（手機第 0～1 階段）
 
 離線、唯讀的收藏查詢網頁。**這個資料夾只有程式，沒有收藏資料**；資料由電腦匯出後，在手機上匯入，
-只存在該手機的瀏覽器（IndexedDB）。完整流程、搜尋規則與實機測試方式見主專案的 `MOBILE_FLOW.md`。
+只存在該手機的瀏覽器（IndexedDB）。完整流程、搜尋規則、卡圖比對與實機測試方式見主專案的 `MOBILE_FLOW.md`。
+
+拍照卡圖比對使用 [OpenCV.js](https://opencv.org/) 4.13.0（`vendor/opencv.js`，Apache License 2.0，授權全文見 `vendor/opencv-LICENSE.txt`）。
 
 ## 部署到 GitHub Pages
 

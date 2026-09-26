@@ -1,9 +1,11 @@
-// 妙蛙收藏查詢（手機第 0 階段）：離線、唯讀。資料由電腦匯出檔匯入，存在這支手機的 IndexedDB。
+// 妙蛙收藏查詢（手機第 0～1 階段）：離線、唯讀。資料由電腦匯出檔匯入，存在這支手機的 IndexedDB。
+// 第 1 階段：拍照用卡圖比對收藏（比對在 scan_worker.js，規則在 lib/card_match.mjs）。
 // 除了使用者主動點「開原圖」，不發出任何外部網路請求。
 import {
   DEFAULT_FILTERS, LANGUAGE_ORDER, SORT_OPTIONS, STATUS_ORDER,
   buildKinds, codeGroups, filterRows, searchCards, sortKinds, validateMobileExport,
 } from './lib/mobile_format.mjs';
+import { MATCH_PARAMS, MATCH_VERSION, classifyMatches, matchGroups } from './lib/card_match.mjs';
 
 const STALE_DAYS = 14;
 const FILTER_STORAGE = 'bulba-mobile-filters';
@@ -19,9 +21,13 @@ const detail = $('#detail');
 const filterToggle = $('#filter-toggle');
 const filterPanel = $('#filters');
 const controls = { status: $('#f-status'), language: $('#f-language'), code: $('#f-code'), bulba: $('#f-bulba'), sort: $('#f-sort') };
+const scanInput = $('#scan');
+const scanPick = $('#scan-pick');
+const scanStatus = $('#scan-status');
 let data = null;
 let pendingImport = null;
 let filters = { ...DEFAULT_FILTERS };
+let scanResult = null; // { photo, pending, ms, groups, error }
 
 // ── IndexedDB：current＝目前資料，previous＝上一份 ──────────────
 
@@ -113,6 +119,9 @@ async function refreshInfo() {
   const ready = Boolean(data);
   search.disabled = !ready;
   filterToggle.disabled = !ready;
+  scanInput.disabled = !ready;
+  scanPick.disabled = !ready;
+  $('#scan-button').classList.toggle('disabled', !ready);
   $('#welcome').hidden = ready;
   $('#restore').hidden = !(await dbGet('previous'));
   if (!ready) { info.textContent = '尚未匯入資料'; info.className = 'data-info'; return; }
@@ -205,6 +214,164 @@ function groupNode(group) {
   return element('section', { className: 'group' }, [title, owned, prices, element('div', { className: 'grid' }, group.kinds.map(tileNode))]);
 }
 
+// ── 卡圖比對 ─────────────────────────────────────────
+// 參考特徵：匯入資料後在背景算一次，存在 IndexedDB 的 features；資料或比對版本變了就重算。
+
+let worker = null;
+let workerSeq = 0;
+const workerCalls = new Map();
+let scanJob = null;
+let scanJobRevision = '';
+
+function resetWorker() {
+  worker?.terminate();
+  worker = null;
+  for (const { reject } of workerCalls.values()) reject(new Error('已重新開始'));
+  workerCalls.clear();
+  scanJob = null;
+  scanJobRevision = '';
+}
+
+function callWorker(type, payload = {}, onProgress = null) {
+  if (!worker) {
+    worker = new Worker('scan_worker.js');
+    worker.onmessage = ({ data: message }) => {
+      const call = workerCalls.get(message.id);
+      if (!call) return;
+      if (message.type === 'progress') { call.onProgress?.(message); return; }
+      workerCalls.delete(message.id);
+      if (message.type === 'done') call.resolve(message.result);
+      else call.reject(new Error(message.message));
+    };
+    worker.onerror = (event) => {
+      for (const { reject } of workerCalls.values()) reject(new Error(event.message || '比對程式載入失敗'));
+      workerCalls.clear();
+    };
+  }
+  const id = ++workerSeq;
+  return new Promise((resolve, reject) => {
+    workerCalls.set(id, { resolve, reject, onProgress });
+    worker.postMessage({ id, type, ...payload });
+  });
+}
+
+const featureRevision = (snapshot) => `${snapshot.sourceRevision}|${snapshot.exportedAt}|v${MATCH_VERSION}`;
+
+function setScanStatus(text, isError = false) {
+  scanStatus.textContent = text;
+  scanStatus.hidden = !text;
+  scanStatus.classList.toggle('error', isError);
+}
+
+function thumbEntries() {
+  const keys = [...new Set(data.rows.map((row) => row.thumb).filter((key) => key && data.thumbs[key]))];
+  return keys.map((key) => [key, data.thumbs[key]]);
+}
+
+/** 讓 worker 手上有目前資料的參考特徵：有快取就載入，沒有就計算並存起來。 */
+function prepareScanner() {
+  if (!data) return Promise.reject(new Error('尚未匯入資料'));
+  const revision = featureRevision(data);
+  if (scanJob && scanJobRevision === revision) return scanJob;
+  scanJobRevision = revision;
+  const job = (async () => {
+    const cached = await dbGet('features');
+    if (cached?.revision === revision) {
+      setScanStatus('載入卡圖比對…');
+      await callWorker('load', { refs: cached.refs });
+    } else {
+      const thumbs = thumbEntries();
+      const progress = (done) => setScanStatus(`準備卡圖比對 ${done}/${thumbs.length}（只需一次，這段時間可以先用搜尋）`);
+      progress(0);
+      const { refs } = await callWorker('prepare', { thumbs }, (message) => progress(message.done));
+      await dbPutMany([['features', { revision, refs }]]);
+    }
+    setScanStatus('');
+  })();
+  scanJob = job;
+  job.catch((error) => {
+    if (scanJob !== job) return;
+    scanJob = null;
+    scanJobRevision = '';
+    setScanStatus(`卡圖比對無法使用：${error.message}`, true);
+  });
+  return job;
+}
+
+async function prepareIfStale() {
+  if (!data) return;
+  const cached = await dbGet('features');
+  if (cached?.revision !== featureRevision(data)) prepareScanner().catch(() => {});
+}
+
+function clearScan() {
+  if (scanResult?.photo) URL.revokeObjectURL(scanResult.photo);
+  scanResult = null;
+}
+
+async function runScan(file) {
+  if (!file || !data) return;
+  clearScan();
+  search.value = '';
+  const current = { photo: URL.createObjectURL(file), pending: true };
+  scanResult = current;
+  render();
+  try {
+    await prepareScanner();
+    const { matches, ms } = await callWorker('match', { blob: file });
+    if (scanResult !== current) return;
+    Object.assign(current, { pending: false, ms, groups: matchGroups(classifyMatches(matches, MATCH_PARAMS), data.rows) });
+  } catch (error) {
+    if (scanResult !== current) return;
+    Object.assign(current, { pending: false, error: error.message });
+  }
+  render();
+}
+
+for (const input of [scanInput, scanPick]) {
+  input.addEventListener('change', () => {
+    const file = input.files[0];
+    input.value = '';
+    runScan(file);
+  });
+}
+
+function renderScan() {
+  const scan = scanResult;
+  const actions = element('span', { className: 'scan-actions' }, [
+    element('label', { htmlFor: 'scan', className: 'text-button', textContent: '重拍' }),
+    element('label', { htmlFor: 'scan-pick', className: 'text-button', textContent: '從相簿選' }),
+    element('button', { type: 'button', className: 'text-button', textContent: '關閉', onclick: () => { clearScan(); render(); } }),
+  ]);
+  let summary;
+  if (scan.pending) summary = scanJob && !scanStatus.hidden ? '卡圖比對準備好後會自動比對…' : '比對中…';
+  else if (scan.error) summary = `比對失敗：${scan.error}`;
+  else summary = `卡圖比對 ${(scan.ms / 1000).toFixed(1)} 秒 · 找到 ${scan.groups.length} 張相近的卡（不套用篩選）`;
+  const head = element('div', { className: 'scan-head' }, [
+    element('img', { className: 'scan-photo', src: scan.photo, alt: '拍到的照片' }),
+    element('div', { className: 'scan-summary' }, [element('p', { className: scan.error ? 'error' : '', textContent: summary }), actions]),
+  ]);
+  results.append(head);
+  if (scan.pending || scan.error) return;
+  if (!scan.groups.length) {
+    empty.textContent = '沒有比對到相近的卡圖。這不代表確定沒有收藏——可以靠近一點、避開反光再拍一次，或改用卡號／卡名搜尋。';
+    empty.hidden = false;
+    return;
+  }
+  results.append(...scan.groups.map((group) => {
+    const first = group.kinds[0];
+    const title = element('h2', { className: 'group-title' }, [
+      element('span', { className: `match-level ${group.level}`, textContent: group.level === 'high' ? '很可能' : '可能' }),
+      ` ${first.cardName || '待補卡名'} ${first.code}-${first.number}`,
+      element('small', { textContent: ` · 相符 ${group.inliers} 點` }),
+    ]);
+    const note = group.kinds.length > 1
+      ? element('p', { className: 'group-owned', textContent: '這張卡有多個語言或版本，請看卡面確認。' })
+      : '';
+    return element('section', { className: 'group' }, [title, note, element('div', { className: 'grid' }, group.kinds.map(tileNode))]);
+  }));
+}
+
 function render() {
   results.replaceChildren();
   empty.hidden = true;
@@ -212,6 +379,7 @@ function render() {
   hint.hidden = true;
   hint.classList.remove('error');
   if (!data) return;
+  if (scanResult && !search.value.trim()) { renderScan(); return; }
   const rows = filterRows(data.rows, filters);
   const filtered = ['status', 'language', 'code', 'bulba'].some((key) => filters[key]);
   const query = search.value.trim();
@@ -239,7 +407,7 @@ function render() {
 }
 
 let timer = 0;
-search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(render, 150); });
+search.addEventListener('input', () => { if (scanResult) clearScan(); clearTimeout(timer); timer = setTimeout(render, 150); });
 filterToggle.addEventListener('click', () => {
   filterPanel.hidden = !filterPanel.hidden;
   filterToggle.setAttribute('aria-expanded', String(!filterPanel.hidden));
@@ -251,6 +419,7 @@ $('#f-clear').addEventListener('click', () => {
   filters = { ...DEFAULT_FILTERS };
   for (const [key, select] of Object.entries(controls)) select.value = filters[key];
   search.value = '';
+  clearScan();
   saveFilters();
   updateFilterToggle();
   render();
@@ -306,8 +475,11 @@ preview.addEventListener('close', async () => {
   if (preview.returnValue !== 'confirm' || !next) return;
   await dbPutMany([['previous', data], ['current', next]]);
   data = next;
+  resetWorker();
+  clearScan();
   await refreshInfo();
   render();
+  prepareIfStale();
 });
 
 $('#restore').addEventListener('click', async () => {
@@ -315,8 +487,11 @@ $('#restore').addEventListener('click', async () => {
   if (!previous || !confirm(`還原成 ${formatDate(previous.exportedAt)} 匯出的資料？目前的資料會改存為上一份。`)) return;
   await dbPutMany([['previous', data], ['current', previous]]);
   data = previous;
+  resetWorker();
+  clearScan();
   await refreshInfo();
   render();
+  prepareIfStale();
 });
 
 // ── 啟動 ─────────────────────────────────────────────
@@ -326,3 +501,4 @@ loadFilters();
 data = await dbGet('current');
 await refreshInfo();
 render();
+prepareIfStale();
