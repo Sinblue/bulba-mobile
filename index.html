@@ -14,9 +14,14 @@
   <header class="top">
     <div class="title-row">
       <h1>妙蛙收藏查詢</h1>
-      <label class="import-button">匯入資料<input id="file" type="file" accept=".json,application/json" hidden></label>
+      <div class="title-actions">
+        <button id="add-button" class="add-button" type="button" disabled>＋ 新增卡</button>
+        <button id="pending-button" class="pending-button" type="button" hidden>待回傳 0</button>
+        <label class="import-button">匯入資料<input id="file" type="file" accept=".json,application/json" hidden></label>
+      </div>
     </div>
     <p id="data-info" class="data-info">尚未匯入資料</p>
+    <p id="notice" class="notice" hidden></p>
     <div class="search-row">
       <input id="search" class="search" type="search" inputmode="text" autocomplete="off" enterkeyhint="search"
              placeholder="卡號／張數、代碼或卡名" aria-label="搜尋" disabled>
@@ -25,6 +30,10 @@
       <input id="scan-pick" type="file" accept="image/*" hidden disabled>
     </div>
     <p id="scan-status" class="scan-status" hidden></p>
+    <div id="pending-mode" class="pending-mode" hidden>
+      <span id="pending-mode-label"></span>
+      <button id="pending-exit" type="button">顯示全部</button>
+    </div>
     <section id="filters" class="filters" aria-label="篩選與排序" hidden>
       <label>狀態 <select id="f-status"></select></label>
       <label>語言 <select id="f-language"></select></label>
@@ -32,6 +41,7 @@
       <label>妙蛙系列 <select id="f-bulba"><option value="">全部</option><option value="bulba">妙蛙系列</option><option value="other">其他</option></select></label>
       <label>排序 <select id="f-sort"></select></label>
       <button id="f-clear" class="clear-button" type="button">清除</button>
+      <button id="f-pending" class="pending-filter-button" type="button" aria-pressed="false" disabled>只看待回傳 0</button>
       <p class="filter-note">有輸入搜尋字時，結果依相關度排序。</p>
     </section>
   </header>
@@ -58,6 +68,7 @@
       <h2>確認匯入</h2>
       <dl id="preview-stats"></dl>
       <p class="preview-note">匯入後，目前的資料會保留為「上一份」，可以還原。</p>
+      <p id="preview-pending-warning" class="error" hidden></p>
       <div class="dialog-actions">
         <button value="cancel" class="secondary">取消</button>
         <button value="confirm" id="confirm-import">確認匯入</button>
@@ -71,6 +82,68 @@
       <button id="detail-close" class="close-button" type="button" aria-label="關閉">×</button>
     </div>
     <div id="detail-body" class="detail-body"></div>
+  </dialog>
+
+  <dialog id="edit" class="edit">
+    <form id="edit-form" method="dialog">
+      <h2 id="edit-title">編輯</h2>
+      <div class="edit-grid">
+        <label>狀態 <select name="狀態"></select></label>
+        <label>購入日 <input name="購入日" type="date"></label>
+        <label>購入價 <input name="購入價" type="number" inputmode="decimal" min="0" step="any"></label>
+        <label>幣別 <select name="幣別"></select></label>
+        <label>卡片狀態 <select name="卡片狀態"></select></label>
+        <label class="wide">備註 <textarea name="備註" rows="3" maxlength="2000"></textarea></label>
+      </div>
+      <p id="edit-error" class="error" hidden></p>
+      <p class="preview-note">修改只存在這支手機（標「待回傳」），匯出變更檔後由電腦套用。</p>
+      <div class="dialog-actions">
+        <button value="cancel" class="secondary" formnovalidate>取消</button>
+        <button value="save">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="addition" class="edit">
+    <form id="addition-form">
+      <h2 id="addition-title">新增卡</h2>
+      <p id="addition-source" class="preview-note" hidden></p>
+      <div id="addition-identity" class="edit-grid">
+        <label>官方代碼 <input name="官方代碼" maxlength="60" required></label>
+        <label>卡號 <input name="卡號" maxlength="40" required></label>
+        <label>語言 <select name="Language"></select></label>
+        <label>變體 <select name="變體"></select></label>
+        <label class="wide">卡名（選填，僅供電腦審核對照） <input name="卡名" maxlength="100"></label>
+      </div>
+      <div class="edit-grid">
+        <label>狀態 <select name="狀態"></select></label>
+        <label>購入日 <input name="購入日" type="date"></label>
+        <label>購入價 <input name="購入價" type="number" inputmode="decimal" min="0" step="any"></label>
+        <label>幣別 <select name="幣別"></select></label>
+        <label>卡片狀態 <select name="卡片狀態"></select></label>
+        <label class="wide">備註 <textarea name="備註" rows="3" maxlength="2000"></textarea></label>
+        <label class="wide">照片（選填，僅供電腦審核） <input name="photo" type="file" accept="image/*" capture="environment"></label>
+      </div>
+      <p id="addition-photo-note" class="preview-note"></p>
+      <p id="addition-error" class="error" hidden></p>
+      <p class="preview-note">先存為待回傳；匯出變更檔後，仍須在電腦審核加入。</p>
+      <div class="dialog-actions">
+        <button type="button" id="addition-cancel" class="secondary">取消</button>
+        <button type="submit">加入待回傳</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="pending-dialog" class="pending-dialog">
+    <div class="detail-header">
+      <strong>待回傳</strong>
+      <button id="pending-close" class="close-button" type="button" aria-label="關閉">×</button>
+    </div>
+    <div class="pending-body">
+      <p id="pending-note" class="preview-note"></p>
+      <ul id="pending-list" class="pending-list"></ul>
+      <div class="dialog-actions"><button id="pending-export" type="button">匯出變更</button></div>
+    </div>
   </dialog>
 
   <dialog id="viewer" class="viewer" aria-label="卡圖">

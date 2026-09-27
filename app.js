@@ -1,9 +1,11 @@
-// 妙蛙收藏查詢（手機第 0～1 階段）：離線、唯讀。資料由電腦匯出檔匯入，存在這支手機的 IndexedDB。
+// 妙蛙收藏查詢（手機第 0～3 階段）：離線。資料由電腦匯出檔匯入，存在這支手機的 IndexedDB。
 // 第 1 階段：拍照用卡圖比對收藏（比對在 scan_worker.js，規則在 lib/card_match.mjs）。
+// 第 3 階段：手機上的修改只存在 pending（不動匯入資料），畫面顯示「匯入資料＋待回傳」；匯出變更檔交給電腦套用。
 // 除了使用者主動點「開原圖」，不發出任何外部網路請求。
 import {
-  DEFAULT_FILTERS, LANGUAGE_ORDER, SORT_OPTIONS, STATUS_ORDER,
-  buildKinds, codeGroups, filterRows, searchCards, sortKinds, validateMobileExport,
+  CONDITION_OPTIONS, CURRENCY_OPTIONS, DEFAULT_FILTERS, LANGUAGE_OPTIONS, LANGUAGE_ORDER, SORT_OPTIONS, STATUS_ORDER,
+  USER_FIELDS, VARIANT_OPTIONS, applyPending, buildKinds, buildMobileChanges, codeGroups, emptyPending, filterRows,
+  kindCountFor, pendingRows, recordEdit, searchCards, sortKinds, validateAddition, validateMobileChanges, validateMobileExport,
 } from './lib/mobile_format.mjs';
 import { MATCH_PARAMS, MATCH_VERSION, classifyMatches, matchGroups } from './lib/card_match.mjs';
 
@@ -20,13 +22,18 @@ const preview = $('#preview');
 const detail = $('#detail');
 const filterToggle = $('#filter-toggle');
 const filterPanel = $('#filters');
+const pendingFilter = $('#f-pending');
+const pendingMode = $('#pending-mode');
 const controls = { status: $('#f-status'), language: $('#f-language'), code: $('#f-code'), bulba: $('#f-bulba'), sort: $('#f-sort') };
 const scanInput = $('#scan');
 const scanPick = $('#scan-pick');
 const scanStatus = $('#scan-status');
-let data = null;
+let data = null;       // 匯入資料（不修改）
+let pending = emptyPending(); // 待回傳的修改與新增
+let view = null;       // 顯示用：data ＋ pending
 let pendingImport = null;
 let filters = { ...DEFAULT_FILTERS };
+let pendingOnly = false; // 暫時檢視模式，不寫入篩選偏好或待回傳資料
 let scanResult = null; // { photo, pending, ms, groups, error }
 
 // ── IndexedDB：current＝目前資料，previous＝上一份 ──────────────
@@ -73,10 +80,10 @@ function saveFilters() {
 const option = (value, label = value) => element('option', { value, textContent: label });
 function fillFilterOptions() {
   controls.status.replaceChildren(option('', '全部狀態'), ...STATUS_ORDER.map((status) => option(status)));
-  const languages = [...new Set(data.rows.map((row) => row.Language))]
+  const languages = [...new Set(view.rows.map((row) => row.Language))]
     .sort((a, b) => LANGUAGE_ORDER.indexOf(a) - LANGUAGE_ORDER.indexOf(b));
   controls.language.replaceChildren(option('', '全部語言'), ...languages.map((language) => option(language)));
-  controls.code.replaceChildren(option('', '全部官方代碼'), ...codeGroups(data.rows).map((group) =>
+  controls.code.replaceChildren(option('', '全部官方代碼'), ...codeGroups(view.rows).map((group) =>
     element('optgroup', { label: group.label }, group.codes.map((code) => option(code)))));
   controls.sort.replaceChildren(...SORT_OPTIONS.map(([value, label]) => option(value, label)));
   for (const [key, select] of Object.entries(controls)) {
@@ -86,12 +93,34 @@ function fillFilterOptions() {
   }
 }
 function activeFilterCount() {
-  return Object.keys(controls).filter((key) => filters[key] !== DEFAULT_FILTERS[key]).length;
+  return Object.keys(controls).filter((key) => filters[key] !== DEFAULT_FILTERS[key]).length + Number(pendingOnly);
 }
 function updateFilterToggle() {
   const count = activeFilterCount();
   filterToggle.textContent = count ? `篩選 ${count}` : '篩選';
   filterToggle.classList.toggle('active', count > 0);
+}
+function updatePendingMode() {
+  const count = view ? pendingRows(view.rows).length : 0;
+  if (pendingOnly && count === 0) pendingOnly = false;
+  pendingFilter.disabled = count === 0;
+  pendingFilter.textContent = `只看待回傳 ${count}`;
+  pendingFilter.setAttribute('aria-pressed', String(pendingOnly));
+  pendingMode.hidden = !pendingOnly;
+  $('#pending-mode-label').textContent = `只看待回傳 · ${count} 張`;
+  updateFilterToggle();
+}
+function setPendingOnly(next) {
+  pendingOnly = next;
+  filters = { ...DEFAULT_FILTERS, sort: filters.sort };
+  for (const [key, select] of Object.entries(controls)) select.value = filters[key];
+  search.value = '';
+  clearScan();
+  saveFilters();
+  updatePendingMode();
+  filterPanel.hidden = true;
+  filterToggle.setAttribute('aria-expanded', 'false');
+  render();
 }
 
 // ── 畫面 ─────────────────────────────────────────────
@@ -109,7 +138,7 @@ const formatDate = (iso) => {
 const daysSince = (iso) => Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
 
 function imageNode(key, className) {
-  const src = key && data.thumbs[key];
+  const src = key && view.thumbs[key];
   if (src) return element('img', { className, src, alt: '', loading: 'lazy', decoding: 'async' });
   return element('span', { className: `${className} placeholder`, textContent: '無圖' });
 }
@@ -121,6 +150,7 @@ async function refreshInfo() {
   filterToggle.disabled = !ready;
   scanInput.disabled = !ready;
   scanPick.disabled = !ready;
+  $('#add-button').disabled = !ready;
   $('#scan-button').classList.toggle('disabled', !ready);
   $('#welcome').hidden = ready;
   $('#restore').hidden = !(await dbGet('previous'));
@@ -150,19 +180,22 @@ function tileNode(kind) {
       element('span', { className: 'tile-code', textContent: `${kind.code}-${kind.number}` }),
       tags,
       badgeNode(kind),
+      kind.rows.some((row) => row.pendingEdit || row.mobileId) ? element('span', { className: 'pending-mark', textContent: '待回傳' }) : '',
     ]),
   ]);
   tile.addEventListener('click', () => openDetail(kind));
   return tile;
 }
 
-// 詳細資料：欄位與本機目錄一致（唯讀欄位＋六個收藏欄位），第 0 階段不支援寫入。
+// 詳細資料：欄位與本機目錄一致（唯讀欄位＋六個收藏欄位）；收藏欄位可在手機編輯，存成待回傳。
 const item = (label, value) => (value === '' || value == null
   ? []
   : [element('dt', { textContent: label }), element('dd', { textContent: String(value) })]);
 const userItem = (label, value) => item(label, value === '' || value == null ? '未填' : value);
 
+let detailKindKey = '';
 function openDetail(kind) {
+  detailKindKey = kind.kindKey;
   const first = kind.rows[0];
   $('#detail-title').textContent = kind.rows.length === 1
     ? first.Name
@@ -178,7 +211,11 @@ function openDetail(kind) {
     ...item('資料來源', first.資料來源), ...item('卡圖來源', first.卡圖來源),
   ]);
   const copyBlocks = kind.rows.map((row) => element('section', { className: 'copy-block' }, [
-    ...(kind.rows.length > 1 ? [element('h3', { textContent: `#${row.個體編號}` })] : []),
+    element('div', { className: 'copy-head' }, [
+      element('h3', { textContent: kind.rows.length > 1 ? `#${row.個體編號 || '新'}` : '收藏' }),
+      row.pendingEdit || row.mobileId ? element('span', { className: 'pending-mark', textContent: row.mobileId ? '手機新增' : '待回傳' }) : '',
+      row.mobileId ? '' : element('button', { type: 'button', className: 'edit-button', textContent: '編輯', onclick: () => openEdit(row.RowKey) }),
+    ]),
     element('dl', {}, [
       ...(kind.rows.length > 1 ? item('RowKey', row.RowKey) : []),
       ...userItem('狀態', row.狀態), ...userItem('購入日', row.購入日), ...userItem('購入價', row.購入價),
@@ -186,8 +223,11 @@ function openDetail(kind) {
     ]),
   ]));
   const info = element('div', { className: 'detail-info' }, [cardInfo, ...copyBlocks]);
+  const copySource = kind.rows.find((row) => !row.mobileId);
+  if (copySource) info.append(element('button', { type: 'button', className: 'edit-button add-copy-button', textContent: '多買一張',
+    onclick: () => openAddition('copy', copySource.RowKey) }));
   if (first.卡圖URL) info.append(element('a', { className: 'original', href: first.卡圖URL, target: '_blank', rel: 'noopener noreferrer', textContent: '開原圖（需連網）' }));
-  info.append(element('p', { className: 'readonly-note', textContent: '手機版目前只能查看；修改請在電腦的收藏目錄。' }));
+  info.append(element('p', { className: 'readonly-note', textContent: '在手機的修改會標「待回傳」，按頂部「待回傳」匯出後交給電腦套用。' }));
   $('#detail-body').replaceChildren(image, info);
   detail.showModal();
 }
@@ -311,16 +351,17 @@ function clearScan() {
 
 async function runScan(file) {
   if (!file || !data) return;
+  if (pendingOnly) { pendingOnly = false; updatePendingMode(); }
   clearScan();
   search.value = '';
-  const current = { photo: URL.createObjectURL(file), pending: true };
+  const current = { photo: URL.createObjectURL(file), file, pending: true };
   scanResult = current;
   render();
   try {
     await prepareScanner();
     const { matches, ms } = await callWorker('match', { blob: file });
     if (scanResult !== current) return;
-    Object.assign(current, { pending: false, ms, groups: matchGroups(classifyMatches(matches, MATCH_PARAMS), data.rows) });
+    Object.assign(current, { pending: false, ms, groups: matchGroups(classifyMatches(matches, MATCH_PARAMS), view.rows) });
   } catch (error) {
     if (scanResult !== current) return;
     Object.assign(current, { pending: false, error: error.message });
@@ -342,6 +383,8 @@ function renderScan() {
     element('label', { htmlFor: 'scan', className: 'text-button', textContent: '重拍' }),
     element('label', { htmlFor: 'scan-pick', className: 'text-button', textContent: '從相簿選' }),
     element('button', { type: 'button', className: 'text-button', textContent: '關閉', onclick: () => { clearScan(); render(); } }),
+    element('button', { type: 'button', className: 'text-button', textContent: '找不到？新增這張卡',
+      onclick: () => openAddition('new', '', scan.file) }),
   ]);
   let summary;
   if (scan.pending) summary = scanJob && !scanStatus.hidden ? '卡圖比對準備好後會自動比對…' : '比對中…';
@@ -380,24 +423,24 @@ function render() {
   hint.classList.remove('error');
   if (!data) return;
   if (scanResult && !search.value.trim()) { renderScan(); return; }
-  const rows = filterRows(data.rows, filters);
-  const filtered = ['status', 'language', 'code', 'bulba'].some((key) => filters[key]);
+  const rows = filterRows(pendingOnly ? pendingRows(view.rows) : view.rows, filters);
+  const filtered = pendingOnly || ['status', 'language', 'code', 'bulba'].some((key) => filters[key]);
   const query = search.value.trim();
 
   if (!query) {
     // 瀏覽模式：依篩選與排序列出所有卡種。
     const kinds = sortKinds(buildKinds(rows), filters.sort);
-    if (!kinds.length) { empty.textContent = '沒有符合篩選條件的卡。'; empty.hidden = false; return; }
+    if (!kinds.length) { empty.textContent = pendingOnly ? '目前沒有待回傳的卡。' : '沒有符合篩選條件的卡。'; empty.hidden = false; return; }
     const owned = rows.filter((row) => row.狀態 === '已收藏').length;
-    hint.textContent = `${filtered ? '符合篩選' : '全部'} ${kinds.length} 種卡（${rows.length} 張，已收藏 ${owned}）。可輸入卡號／張數、代碼或卡名，多個詞用空白分開。`;
+    hint.textContent = `${pendingOnly ? '待回傳' : filtered ? '符合篩選' : '全部'} ${kinds.length} 種卡（${rows.length} 張，已收藏 ${owned}）。可輸入卡號／張數、代碼或卡名，多個詞用空白分開。`;
     hint.hidden = false;
     results.append(element('div', { className: 'grid' }, kinds.map(tileNode)));
     return;
   }
 
-  const result = searchCards(rows, query, data.rows);
+  const result = searchCards(rows, query, pendingOnly ? pendingRows(view.rows) : view.rows);
   if (!result.groups.length) {
-    empty.textContent = '收藏清單中沒有找到符合的卡。這不代表確定沒有收藏——請確認輸入的卡號、張數，或改用卡名搜尋。'
+    empty.textContent = (pendingOnly ? '待回傳的卡中沒有找到符合的卡。' : '收藏清單中沒有找到符合的卡。這不代表確定沒有收藏——請確認輸入的卡號、張數，或改用卡名搜尋。')
       + (filtered ? '（目前有套用篩選，可按「篩選」→「清除」再查一次。）' : '');
     empty.hidden = false;
     return;
@@ -416,13 +459,251 @@ for (const [key, select] of Object.entries(controls)) {
   select.addEventListener('change', () => { filters[key] = select.value; saveFilters(); updateFilterToggle(); render(); });
 }
 $('#f-clear').addEventListener('click', () => {
+  pendingOnly = false;
   filters = { ...DEFAULT_FILTERS };
   for (const [key, select] of Object.entries(controls)) select.value = filters[key];
   search.value = '';
   clearScan();
   saveFilters();
-  updateFilterToggle();
+  updatePendingMode();
   render();
+});
+pendingFilter.addEventListener('click', () => setPendingOnly(!pendingOnly));
+$('#pending-exit').addEventListener('click', () => setPendingOnly(false));
+
+// ── 待回傳（第 3 階段）：手機修改存在 IndexedDB 的 pending，匯出成變更檔交給電腦 ──
+
+const pendingButton = $('#pending-button');
+const pendingDialog = $('#pending-dialog');
+const editDialog = $('#edit');
+const editForm = $('#edit-form');
+const notice = $('#notice');
+let editingRowKey = '';
+
+function refreshView() {
+  view = data ? applyPending(data, pending) : null;
+  const count = pendingCount();
+  pendingButton.hidden = !data || count === 0;
+  pendingButton.textContent = `待回傳 ${count}`;
+  updatePendingMode();
+}
+
+const pendingCount = () => Object.keys(pending.edits).length + pending.additions.length;
+const pendingClearText = () => `${pendingCount()} 筆待回傳（${Object.keys(pending.edits).length} 筆修改、${pending.additions.length} 筆新增）`;
+
+async function savePending(next) {
+  pending = next;
+  await dbPutMany([['pending', pending]]);
+  refreshView();
+}
+
+function showNotice(text) {
+  notice.textContent = text;
+  notice.hidden = !text;
+  clearTimeout(showNotice.timer);
+  if (text) showNotice.timer = setTimeout(() => { notice.hidden = true; }, 10_000);
+}
+
+const now = () => new Date().toISOString();
+const shown = (value) => (value === '' || value == null ? '（空白）' : String(value));
+const fillSelect = (select, values) => select.replaceChildren(...values.map((value) => option(value, value || '（空白）')));
+fillSelect(editForm.elements.狀態, STATUS_ORDER);
+fillSelect(editForm.elements.幣別, CURRENCY_OPTIONS);
+fillSelect(editForm.elements.卡片狀態, CONDITION_OPTIONS);
+
+function openEdit(rowKey) {
+  const row = view.rows.find((item) => item.RowKey === rowKey);
+  if (!row) return;
+  editingRowKey = rowKey;
+  $('#edit-title').textContent = row.Name;
+  for (const field of ['狀態', '購入日', '幣別', '卡片狀態', '備註']) editForm.elements[field].value = row[field] ?? '';
+  editForm.elements.購入價.value = row.購入價 === '' || row.購入價 == null ? '' : String(row.購入價);
+  $('#edit-error').hidden = true;
+  editDialog.showModal();
+}
+
+// 改成「已收藏」且購入日空白時，順手帶入今天（仍可改）。
+editForm.elements.狀態.addEventListener('change', () => {
+  if (editForm.elements.狀態.value === '已收藏' && !editForm.elements.購入日.value) editForm.elements.購入日.value = formatDate(now());
+});
+
+editForm.addEventListener('submit', async (event) => {
+  if (event.submitter?.value !== 'save') return;
+  event.preventDefault();
+  const base = data.rows.find((row) => row.RowKey === editingRowKey);
+  const priceText = editForm.elements.購入價.value.trim();
+  const fields = {
+    狀態: editForm.elements.狀態.value,
+    購入價: priceText === '' ? '' : Number(priceText),
+    幣別: editForm.elements.幣別.value,
+    購入日: editForm.elements.購入日.value,
+    卡片狀態: editForm.elements.卡片狀態.value,
+    備註: editForm.elements.備註.value,
+  };
+  try {
+    await savePending(recordEdit(pending, base, fields, now()));
+  } catch (error) {
+    $('#edit-error').textContent = error.message;
+    $('#edit-error').hidden = false;
+    return;
+  }
+  editDialog.close();
+  render();
+  const kind = buildKinds(view.rows).find((item) => item.kindKey === detailKindKey);
+  if (kind && detail.open) openDetail(kind);
+});
+
+// 新增只寫 pending；手機不決定 RowKey／個體編號。照片壓成小圖，留在變更檔供電腦審核。
+const additionDialog = $('#addition');
+const additionForm = $('#addition-form');
+let additionMode = 'new';
+let additionCopyOf = '';
+let additionScanFile = null;
+fillSelect(additionForm.elements.Language, LANGUAGE_OPTIONS);
+fillSelect(additionForm.elements.變體, VARIANT_OPTIONS);
+fillSelect(additionForm.elements.狀態, STATUS_ORDER);
+fillSelect(additionForm.elements.幣別, CURRENCY_OPTIONS);
+fillSelect(additionForm.elements.卡片狀態, CONDITION_OPTIONS);
+
+function openAddition(mode, copyOf = '', scanFile = null) {
+  additionMode = mode;
+  additionCopyOf = copyOf;
+  additionScanFile = scanFile;
+  additionForm.reset();
+  additionForm.elements.狀態.value = '要收藏';
+  $('#addition-title').textContent = mode === 'copy' ? '多買一張' : '新增卡';
+  const source = mode === 'copy' ? data.rows.find((row) => row.RowKey === copyOf) : null;
+  $('#addition-source').hidden = !source;
+  $('#addition-source').textContent = source ? `${source.Name} · 只可改變體與收藏資料` : '';
+  for (const name of ['官方代碼', '卡號', 'Language', '卡名']) {
+    const field = additionForm.elements[name];
+    field.closest('label').hidden = mode === 'copy';
+    field.required = mode === 'new' && name !== '卡名';
+  }
+  additionForm.elements.變體.value = source?.變體 ?? '';
+  $('#addition-photo-note').textContent = scanFile ? '已附上剛拍的照片；也可另外選一張取代。' : '';
+  $('#addition-error').hidden = true;
+  additionDialog.showModal();
+}
+$('#add-button').addEventListener('click', () => openAddition('new'));
+$('#addition-cancel').addEventListener('click', () => additionDialog.close());
+additionForm.elements.photo.addEventListener('change', () => {
+  $('#addition-photo-note').textContent = additionForm.elements.photo.files[0]?.name || (additionScanFile ? '已附上剛拍的照片。' : '');
+});
+
+async function compressedPhoto(file) {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const scale = Math.min(1, 800 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.7);
+  } finally { bitmap.close(); }
+}
+
+additionForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = additionForm.elements;
+  const price = form.購入價.value.trim();
+  const fields = {
+    狀態: form.狀態.value, 購入價: price === '' ? '' : Number(price), 幣別: form.幣別.value,
+    購入日: form.購入日.value, 卡片狀態: form.卡片狀態.value, 備註: form.備註.value,
+  };
+  const addition = { id: crypto.randomUUID(), at: now(), type: additionMode,
+    變體: form.變體.value, ...fields };
+  if (additionMode === 'copy') {
+    addition.copyOf = additionCopyOf;
+    addition.baseCount = kindCountFor(data.rows, additionCopyOf, addition.變體);
+  } else {
+    Object.assign(addition, { 官方代碼: form.官方代碼.value.trim(), 卡號: form.卡號.value.trim(),
+      Language: form.Language.value, 卡名: form.卡名.value.trim() });
+  }
+  const errorNode = $('#addition-error');
+  try {
+    if (additionMode === 'new' && view.rows.some((row) => row.官方代碼 === addition.官方代碼
+        && row.卡號 === addition.卡號 && row.Language === addition.Language
+        && (row.變體 || '') === addition.變體)) throw new Error('這個卡種已存在；請到卡片詳細資料使用「多買一張」。');
+    const photo = form.photo.files[0] ?? additionScanFile;
+    if (photo) addition.photo = await compressedPhoto(photo);
+    const errors = validateAddition(addition);
+    if (errors.length) throw new Error(errors.join('；'));
+    await savePending({ ...pending, additions: [...pending.additions, addition] });
+    await refreshInfo();
+    additionDialog.close();
+    render();
+    if (detail.open) detail.close();
+    showNotice('已加入待回傳；匯出後還需在電腦審核。');
+  } catch (error) {
+    errorNode.textContent = error.message;
+    errorNode.hidden = false;
+  }
+});
+
+function openPending() {
+  const byKey = new Map(data.rows.map((row) => [row.RowKey, row]));
+  const items = Object.entries(pending.edits).map(([rowKey, edit]) => {
+    const changes = Object.keys(edit.next).map((field) => `${field}：${shown(edit.previous[field])} → ${shown(edit.next[field])}`);
+    const cancel = element('button', {
+      type: 'button', className: 'text-button', textContent: '取消這筆',
+      onclick: async () => {
+        const edits = { ...pending.edits };
+        delete edits[rowKey];
+        await savePending({ ...pending, edits });
+        render();
+        openPending();
+      },
+    });
+    return element('li', {}, [
+      element('strong', { textContent: byKey.get(rowKey)?.Name ?? rowKey }),
+      element('span', { className: 'pending-changes', textContent: changes.join('；') }),
+      cancel,
+    ]);
+  });
+  const additions = pending.additions.map((addition) => {
+    const label = addition.type === 'copy' ? `多買一張：${addition.copyOf}（${addition.變體 || '一般'}）`
+      : `新增卡：${addition.官方代碼}-${addition.卡號} ${addition.Language} ${addition.變體 || '一般'}`;
+    return element('li', {}, [
+      element('strong', { textContent: label }),
+      addition.photo ? element('img', { className: 'pending-photo', src: addition.photo, alt: '新增卡照片' }) : '',
+      element('span', { className: 'pending-changes', textContent: USER_FIELDS.map((key) => `${key}：${shown(addition[key])}`).join('；') }),
+      element('button', { type: 'button', className: 'text-button', textContent: '取消這筆', onclick: async () => {
+        await savePending({ ...pending, additions: pending.additions.filter((item) => item.id !== addition.id) });
+        await refreshInfo();
+        render();
+        openPending();
+      } }),
+    ]);
+  });
+  $('#pending-list').replaceChildren(...items, ...additions);
+  $('#pending-note').textContent = `${items.length} 筆修改、${additions.length} 筆新增。`
+    + (pending.lastExportedAt ? `上次匯出：${formatDate(pending.lastExportedAt)}。` : '')
+    + '匯出後仍會保留；確認重新匯入或還原資料時，所有待回傳都會清除。';
+  $('#pending-export').disabled = !items.length && !pending.additions.length;
+  if (!pendingDialog.open) pendingDialog.showModal();
+}
+pendingButton.addEventListener('click', openPending);
+$('#pending-close').addEventListener('click', () => pendingDialog.close());
+
+$('#pending-export').addEventListener('click', async () => {
+  const at = new Date();
+  const pad = (value) => String(value).padStart(2, '0');
+  const stamp = `${at.getFullYear()}${pad(at.getMonth() + 1)}${pad(at.getDate())}-${pad(at.getHours())}${pad(at.getMinutes())}`;
+  const exportId = `${stamp}${pad(at.getSeconds())}-${Math.random().toString(16).slice(2, 6)}`;
+  const changes = buildMobileChanges(pending, {
+    base: { sourceRevision: data.sourceRevision, exportedAt: data.exportedAt }, exportedAt: at.toISOString(), exportId,
+  });
+  const problems = validateMobileChanges(changes);
+  if (problems.length) { $('#pending-note').textContent = `變更檔驗證失敗：${problems.slice(0, 3).join('；')}`; return; }
+  const url = URL.createObjectURL(new Blob([JSON.stringify(changes)], { type: 'application/json' }));
+  const link = element('a', { href: url, download: `bulba_changes_${stamp}.json` });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  await savePending({ ...pending, lastExportedAt: at.toISOString() });
+  openPending();
 });
 
 // ── 匯入與還原 ───────────────────────────────────────
@@ -466,31 +747,47 @@ $('#file').addEventListener('change', async (event) => {
     ...(diff ? [['新增', `${diff.added} 列`], ['移除', `${diff.removed} 列`], ['狀態改變', `${diff.changed} 列`]] : []),
   ];
   $('#preview-stats').replaceChildren(...entries.flatMap(([label, value]) => [element('dt', { textContent: label }), element('dd', { textContent: value })]));
+  const warning = $('#preview-pending-warning');
+  warning.hidden = pendingCount() === 0;
+  warning.textContent = pendingCount() ? `確認匯入後將清除手機上的 ${pendingClearText()}，不再以手機暫記覆蓋匯入資料；未匯出的內容與照片無法從手機復原。` : '';
   preview.showModal();
 });
 
-preview.addEventListener('close', async () => {
+// 按鈕送出時處理（不靠 dialog 的 close 事件：部分瀏覽器環境不會觸發）。
+preview.querySelector('form').addEventListener('submit', async (event) => {
   const next = pendingImport;
   pendingImport = null;
-  if (preview.returnValue !== 'confirm' || !next) return;
-  await dbPutMany([['previous', data], ['current', next]]);
+  if (event.submitter?.value !== 'confirm' || !next) return;
+  const removed = pendingCount();
+  const cleared = emptyPending();
+  await dbPutMany([['previous', data], ['current', next], ['pending', cleared]]);
   data = next;
+  pending = cleared;
+  refreshView();
   resetWorker();
   clearScan();
   await refreshInfo();
   render();
+  if (removed) showNotice(`已採用匯入資料，清除 ${removed} 筆手機待回傳。`);
   prepareIfStale();
 });
 
 $('#restore').addEventListener('click', async () => {
   const previous = await dbGet('previous');
-  if (!previous || !confirm(`還原成 ${formatDate(previous.exportedAt)} 匯出的資料？目前的資料會改存為上一份。`)) return;
-  await dbPutMany([['previous', data], ['current', previous]]);
+  if (!previous) return;
+  const removed = pendingCount();
+  const warning = removed ? `\n手機上的 ${pendingClearText()}也會清除；未匯出的內容與照片無法從手機復原。` : '';
+  if (!confirm(`還原成 ${formatDate(previous.exportedAt)} 匯出的資料？目前的資料會改存為上一份。${warning}`)) return;
+  const cleared = emptyPending();
+  await dbPutMany([['previous', data], ['current', previous], ['pending', cleared]]);
   data = previous;
+  pending = cleared;
+  refreshView();
   resetWorker();
   clearScan();
   await refreshInfo();
   render();
+  if (removed) showNotice(`已還原上一份資料，清除 ${removed} 筆手機待回傳。`);
   prepareIfStale();
 });
 
@@ -499,6 +796,8 @@ $('#restore').addEventListener('click', async () => {
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 loadFilters();
 data = await dbGet('current');
+pending = (await dbGet('pending')) ?? emptyPending();
+refreshView();
 await refreshInfo();
 render();
 prepareIfStale();
