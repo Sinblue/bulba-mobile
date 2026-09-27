@@ -29,6 +29,7 @@
       <label id="scan-button" class="scan-button disabled" aria-label="拍照比對卡圖" title="拍照比對卡圖">📷<input id="scan" type="file" accept="image/*" capture="environment" hidden disabled></label>
       <input id="scan-pick" type="file" accept="image/*" hidden disabled>
     </div>
+    <label id="scan-album" class="scan-album" for="scan-pick" hidden>或直接從相簿選取</label>
     <p id="scan-status" class="scan-status" hidden></p>
     <div id="pending-mode" class="pending-mode" hidden>
       <span id="pending-mode-label"></span>
@@ -37,7 +38,11 @@
     <section id="filters" class="filters" aria-label="篩選與排序" hidden>
       <label>狀態 <select id="f-status"></select></label>
       <label>語言 <select id="f-language"></select></label>
-      <label>官方代碼 <select id="f-code"></select></label>
+      <div id="code-filter" class="code-filter">
+        <span id="code-filter-label">官方代碼</span>
+        <button id="f-code" class="code-filter-button" type="button" aria-labelledby="code-filter-label f-code" aria-haspopup="true" aria-expanded="false" aria-controls="f-code-menu">全部官方代碼</button>
+        <div id="f-code-menu" class="code-filter-menu" hidden></div>
+      </div>
       <label>妙蛙系列 <select id="f-bulba"><option value="">全部</option><option value="bulba">妙蛙系列</option><option value="other">其他</option></select></label>
       <label>排序 <select id="f-sort"></select></label>
       <button id="f-clear" class="clear-button" type="button">清除</button>
@@ -84,6 +89,35 @@
     <div id="detail-body" class="detail-body"></div>
   </dialog>
 
+  <dialog id="market-list-dialog" class="market-list-dialog" aria-label="市場價格紀錄">
+    <div class="detail-header">
+      <strong id="market-list-title">市場價格紀錄</strong>
+      <button id="market-list-close" class="close-button" type="button" aria-label="關閉市場價格紀錄">×</button>
+    </div>
+    <div class="market-list-body">
+      <div id="market-list-records"></div>
+      <button id="market-list-add" class="market-add-button" type="button">＋ 記錄價格</button>
+    </div>
+  </dialog>
+
+  <dialog id="market-dialog" class="edit">
+    <form id="market-form">
+      <h2 id="market-title">記錄市場價格</h2>
+      <p id="market-kind" class="preview-note"></p>
+      <div class="edit-grid">
+        <label>日期 <input name="date" type="date" required></label>
+        <label>幣值 <input name="currency" type="text" maxlength="12" required placeholder="例如 NT"></label>
+        <label>價格 <input name="price" type="number" inputmode="decimal" min="0" max="1000000000" step="any" required></label>
+        <label>商店 <input name="shop" type="text" maxlength="200" placeholder="選填"></label>
+        <label class="wide">備註 <textarea name="note" rows="3" maxlength="2000" placeholder="選填"></textarea></label>
+      </div>
+      <p id="market-error" class="error" hidden></p>
+      <p id="market-unsaved" class="market-unsaved" hidden>這筆市場價格尚未儲存。</p>
+      <p class="preview-note">先存為待回傳；匯出變更檔後仍須在電腦審核。</p>
+      <div class="dialog-actions"><button id="market-cancel" class="secondary" type="button">取消</button><button type="submit">儲存紀錄</button></div>
+    </form>
+  </dialog>
+
   <dialog id="edit" class="edit">
     <form id="edit-form" method="dialog">
       <h2 id="edit-title">編輯</h2>
@@ -92,7 +126,7 @@
         <label>購入日 <input name="購入日" type="date"></label>
         <label>購入價 <input name="購入價" type="number" inputmode="decimal" min="0" step="any"></label>
         <label>幣別 <select name="幣別"></select></label>
-        <label>卡片狀態 <select name="卡片狀態"></select></label>
+        <label>卡片狀態 <input name="卡片狀態" type="text" maxlength="2000" placeholder="未填"></label>
         <label class="wide">備註 <textarea name="備註" rows="3" maxlength="2000"></textarea></label>
       </div>
       <p id="edit-error" class="error" hidden></p>
@@ -120,7 +154,7 @@
         <label>購入日 <input name="購入日" type="date"></label>
         <label>購入價 <input name="購入價" type="number" inputmode="decimal" min="0" step="any"></label>
         <label>幣別 <select name="幣別"></select></label>
-        <label>卡片狀態 <select name="卡片狀態"></select></label>
+        <label>卡片狀態 <input name="卡片狀態" type="text" maxlength="2000" placeholder="未填"></label>
         <label class="wide">備註 <textarea name="備註" rows="3" maxlength="2000"></textarea></label>
         <label class="wide">照片（選填，僅供電腦審核） <input name="photo" type="file" accept="image/*" capture="environment"></label>
       </div>

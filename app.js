@@ -3,11 +3,13 @@
 // 第 3 階段：手機上的修改只存在 pending（不動匯入資料），畫面顯示「匯入資料＋待回傳」；匯出變更檔交給電腦套用。
 // 除了使用者主動點「開原圖」，不發出任何外部網路請求。
 import {
-  CONDITION_OPTIONS, CURRENCY_OPTIONS, DEFAULT_FILTERS, LANGUAGE_OPTIONS, LANGUAGE_ORDER, SORT_OPTIONS, STATUS_ORDER,
+  CURRENCY_OPTIONS, DEFAULT_FILTERS, LANGUAGE_OPTIONS, LANGUAGE_ORDER, SORT_OPTIONS, STATUS_ORDER,
   USER_FIELDS, VARIANT_OPTIONS, applyPending, buildKinds, buildMobileChanges, codeGroups, emptyPending, filterRows,
-  kindCountFor, pendingRows, recordEdit, searchCards, sortKinds, validateAddition, validateMobileChanges, validateMobileExport,
+  kindCountFor, normalizeCodeSelection, pendingRows, recordEdit, searchCards, sortKinds, toggleCodeSelection,
+  validateAddition, validateMobileChanges, validateMobileExport,
 } from './lib/mobile_format.mjs';
 import { MATCH_PARAMS, MATCH_VERSION, classifyMatches, matchGroups } from './lib/card_match.mjs';
+import { kindKeyFromRowKey, normalizeMarketRecord, pricesForKind, recordMarketEdit } from './lib/market_prices.mjs';
 
 const STALE_DAYS = 14;
 const FILTER_STORAGE = 'bulba-mobile-filters';
@@ -24,9 +26,13 @@ const filterToggle = $('#filter-toggle');
 const filterPanel = $('#filters');
 const pendingFilter = $('#f-pending');
 const pendingMode = $('#pending-mode');
-const controls = { status: $('#f-status'), language: $('#f-language'), code: $('#f-code'), bulba: $('#f-bulba'), sort: $('#f-sort') };
+const controls = { status: $('#f-status'), language: $('#f-language'), bulba: $('#f-bulba'), sort: $('#f-sort') };
+const codeFilter = $('#code-filter');
+const codeButton = $('#f-code');
+const codeMenu = $('#f-code-menu');
 const scanInput = $('#scan');
 const scanPick = $('#scan-pick');
+const scanAlbum = $('#scan-album');
 const scanStatus = $('#scan-status');
 let data = null;       // 匯入資料（不修改）
 let pending = emptyPending(); // 待回傳的修改與新增
@@ -35,6 +41,9 @@ let pendingImport = null;
 let filters = { ...DEFAULT_FILTERS };
 let pendingOnly = false; // 暫時檢視模式，不寫入篩選偏好或待回傳資料
 let scanResult = null; // { photo, pending, ms, groups, error }
+let marketKindKey = '';
+let editingMarket = null;
+let marketKindKeys = new Set();
 
 // ── IndexedDB：current＝目前資料，previous＝上一份 ──────────────
 
@@ -70,8 +79,8 @@ async function dbPutMany(entries) {
 function loadFilters() {
   try {
     const saved = JSON.parse(localStorage.getItem(FILTER_STORAGE) ?? 'null');
-    if (saved && typeof saved === 'object') filters = { ...DEFAULT_FILTERS, ...saved };
-  } catch { filters = { ...DEFAULT_FILTERS }; }
+    if (saved && typeof saved === 'object') filters = { ...DEFAULT_FILTERS, ...saved, code: normalizeCodeSelection(saved.code) };
+  } catch { filters = { ...DEFAULT_FILTERS, code: [] }; }
 }
 function saveFilters() {
   try { localStorage.setItem(FILTER_STORAGE, JSON.stringify(filters)); } catch { /* 無痕模式等情況略過 */ }
@@ -83,8 +92,6 @@ function fillFilterOptions() {
   const languages = [...new Set(view.rows.map((row) => row.Language))]
     .sort((a, b) => LANGUAGE_ORDER.indexOf(a) - LANGUAGE_ORDER.indexOf(b));
   controls.language.replaceChildren(option('', '全部語言'), ...languages.map((language) => option(language)));
-  controls.code.replaceChildren(option('', '全部官方代碼'), ...codeGroups(view.rows).map((group) =>
-    element('optgroup', { label: group.label }, group.codes.map((code) => option(code)))));
   controls.sort.replaceChildren(...SORT_OPTIONS.map(([value, label]) => option(value, label)));
   for (const [key, select] of Object.entries(controls)) {
     const allowed = [...select.options].map((item) => item.value);
@@ -92,8 +99,35 @@ function fillFilterOptions() {
     select.value = filters[key];
   }
 }
+function fillCodeMenu() {
+  if (!view) return;
+  const groups = codeGroups(view.rows);
+  filters.code = normalizeCodeSelection(filters.code, groups.flatMap((group) => group.codes));
+  codeButton.textContent = filters.code.length ? `已選 ${filters.code.length} 個代碼` : '全部官方代碼';
+  const scroll = codeMenu.scrollTop;
+  const clear = element('button', { type: 'button', className: 'code-clear', textContent: '全部官方代碼' });
+  const sections = groups.map((group) => {
+    const chosen = group.codes.filter((code) => filters.code.includes(code)).length;
+    const groupInput = element('input', { type: 'checkbox', className: 'code-group-input', checked: chosen === group.codes.length });
+    groupInput.dataset.group = group.label;
+    groupInput.indeterminate = chosen > 0 && chosen < group.codes.length;
+    const heading = element('label', { className: 'code-group-toggle' }, [groupInput, group.label]);
+    const items = group.codes.map((code) => element('label', { className: 'code-option' }, [
+      element('input', { type: 'checkbox', className: 'code-option-input', value: code, checked: filters.code.includes(code) }), code,
+    ]));
+    return element('section', { className: 'code-group' }, [heading, element('div', { className: 'code-options' }, items)]);
+  });
+  codeMenu.replaceChildren(clear, ...sections);
+  codeMenu.scrollTop = scroll;
+}
+function setCodeMenuOpen(open) {
+  codeMenu.hidden = !open;
+  codeButton.setAttribute('aria-expanded', String(open));
+  if (open) codeMenu.querySelector('input:checked, input, button')?.focus();
+}
 function activeFilterCount() {
-  return Object.keys(controls).filter((key) => filters[key] !== DEFAULT_FILTERS[key]).length + Number(pendingOnly);
+  return Object.keys(controls).filter((key) => filters[key] !== DEFAULT_FILTERS[key]).length
+    + Number(filters.code.length > 0) + Number(pendingOnly);
 }
 function updateFilterToggle() {
   const count = activeFilterCount();
@@ -112,8 +146,10 @@ function updatePendingMode() {
 }
 function setPendingOnly(next) {
   pendingOnly = next;
-  filters = { ...DEFAULT_FILTERS, sort: filters.sort };
+  filters = { ...DEFAULT_FILTERS, code: [], sort: filters.sort };
   for (const [key, select] of Object.entries(controls)) select.value = filters[key];
+  setCodeMenuOpen(false);
+  fillCodeMenu();
   search.value = '';
   clearScan();
   saveFilters();
@@ -150,6 +186,7 @@ async function refreshInfo() {
   filterToggle.disabled = !ready;
   scanInput.disabled = !ready;
   scanPick.disabled = !ready;
+  scanAlbum.hidden = !ready;
   $('#add-button').disabled = !ready;
   $('#scan-button').classList.toggle('disabled', !ready);
   $('#welcome').hidden = ready;
@@ -173,6 +210,8 @@ function tileNode(kind) {
     element('span', { className: `tile-lang ${LANGUAGE_CLASS[kind.language] ?? ''}`, textContent: kind.language }),
     kind.variant === '一般' ? '' : ` · ${kind.variant}`,
   ]);
+  const priceMark = marketKindKeys.has(kind.kindKey) ? element('span', { className: 'tile-price-mark', textContent: '$' }) : '';
+  if (priceMark) priceMark.setAttribute('aria-hidden', 'true');
   const tile = element('button', { className: 'tile', type: 'button' }, [
     imageNode(kind.thumb, 'tile-image'),
     element('span', { className: 'tile-copy' }, [
@@ -181,8 +220,10 @@ function tileNode(kind) {
       tags,
       badgeNode(kind),
       kind.rows.some((row) => row.pendingEdit || row.mobileId) ? element('span', { className: 'pending-mark', textContent: '待回傳' }) : '',
+      priceMark,
     ]),
   ]);
+  if (priceMark) tile.title = '有市場價格紀錄';
   tile.addEventListener('click', () => openDetail(kind));
   return tile;
 }
@@ -194,6 +235,47 @@ const item = (label, value) => (value === '' || value == null
 const userItem = (label, value) => item(label, value === '' || value == null ? '未填' : value);
 
 let detailKindKey = '';
+let marketListKindKey = '';
+const marketListDialog = $('#market-list-dialog');
+function currentMarketRecords() {
+  const records = new Map((data?.marketPrices?.records ?? []).map((record) => [record.id, record]));
+  for (const change of Object.values(pending.marketPrices ?? {})) records.set(change.id, change.next);
+  return [...records.values()];
+}
+
+function marketEntry(kind) {
+  const count = pricesForKind(currentMarketRecords(), kind.kindKey).length;
+  return element('button', { type: 'button', className: 'market-open-button',
+    textContent: `市場價格紀錄（${count} 筆）`, onclick: () => openMarketList(kind.kindKey) });
+}
+
+function renderMarketList() {
+  const kind = buildKinds(view.rows).find((item) => item.kindKey === marketListKindKey);
+  const records = pricesForKind(currentMarketRecords(), marketListKindKey);
+  $('#market-list-title').textContent = `${kind?.cardName || '待補卡名'} · 市場價格紀錄（${records.length} 筆）`;
+  const existsOnComputer = data.rows.some((row) => kindKeyFromRowKey(row.RowKey) === marketListKindKey);
+  const nodes = records.map((record) => {
+    const pendingMark = pending.marketPrices?.[record.id] ? ' · 待回傳' : '';
+    return element('div', { className: 'market-record' }, [
+      element('strong', { textContent: `${record.date} · ${record.price} ${record.currency}${pendingMark}` }),
+      element('span', { className: 'market-record-meta', textContent: [record.shop, record.note].filter(Boolean).join(' · ') }),
+      element('button', { type: 'button', className: 'edit-button', textContent: '修改', onclick: () => openMarketForm(marketListKindKey, record) }),
+    ]);
+  });
+  if (!nodes.length) nodes.push(element('p', { className: 'preview-note', textContent: existsOnComputer
+    ? '尚無市場價格紀錄。' : '可先記錄；電腦審核時須先加入這張新卡，再套用價格。' }));
+  $('#market-list-records').replaceChildren(...nodes);
+}
+
+function openMarketList(kindKey) {
+  marketListKindKey = kindKey;
+  renderMarketList();
+  marketListDialog.showModal();
+}
+$('#market-list-close').addEventListener('click', () => marketListDialog.close());
+marketListDialog.addEventListener('click', (event) => { if (event.target === marketListDialog) marketListDialog.close(); });
+$('#market-list-add').addEventListener('click', () => openMarketForm(marketListKindKey));
+
 function openDetail(kind) {
   detailKindKey = kind.kindKey;
   const first = kind.rows[0];
@@ -222,17 +304,70 @@ function openDetail(kind) {
       ...userItem('幣別', row.幣別), ...userItem('卡片狀態', row.卡片狀態), ...userItem('備註', row.備註),
     ]),
   ]));
-  const info = element('div', { className: 'detail-info' }, [cardInfo, ...copyBlocks]);
+  const info = element('div', { className: 'detail-info' }, [marketEntry(kind), cardInfo, ...copyBlocks]);
   const copySource = kind.rows.find((row) => !row.mobileId);
   if (copySource) info.append(element('button', { type: 'button', className: 'edit-button add-copy-button', textContent: '多買一張',
     onclick: () => openAddition('copy', copySource.RowKey) }));
-  if (first.卡圖URL) info.append(element('a', { className: 'original', href: first.卡圖URL, target: '_blank', rel: 'noopener noreferrer', textContent: '開原圖（需連網）' }));
-  info.append(element('p', { className: 'readonly-note', textContent: '在手機的修改會標「待回傳」，按頂部「待回傳」匯出後交給電腦套用。' }));
+  if (first.卡圖URL) info.append(element('a', { className: 'original', href: first.卡圖URL, target: '_blank', rel: 'noopener noreferrer', textContent: '開原圖' }));
   $('#detail-body').replaceChildren(image, info);
-  detail.showModal();
+  if (!detail.open) detail.showModal();
 }
 $('#detail-close').addEventListener('click', () => detail.close());
 detail.addEventListener('click', (event) => { if (event.target === detail) detail.close(); });
+
+const marketDialog = $('#market-dialog');
+const marketForm = $('#market-form');
+let marketFormStart = '';
+function openMarketForm(kindKey, record = null) {
+  marketKindKey = kindKey;
+  editingMarket = record;
+  marketForm.reset();
+  $('#market-title').textContent = record ? '修改市場價格' : '記錄市場價格';
+  $('#market-kind').textContent = kindKey;
+  const today = new Date();
+  marketForm.elements.date.value = record?.date ?? `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  marketForm.elements.currency.value = record?.currency ?? 'NT';
+  marketForm.elements.price.value = record?.price ?? '';
+  marketForm.elements.shop.value = record?.shop ?? '';
+  marketForm.elements.note.value = record?.note ?? '';
+  $('#market-error').hidden = true;
+  marketFormStart = JSON.stringify([...new FormData(marketForm)]);
+  $('#market-unsaved').hidden = true;
+  marketDialog.showModal();
+}
+const marketFormChanged = () => JSON.stringify([...new FormData(marketForm)]) !== marketFormStart;
+$('#market-cancel').addEventListener('click', () => {
+  if (marketFormChanged() && !confirm('這筆市場價格尚未儲存，確定放棄修改？')) return;
+  marketDialog.close();
+});
+marketDialog.addEventListener('cancel', (event) => {
+  if (marketFormChanged() && !confirm('這筆市場價格尚未儲存，確定放棄修改？')) event.preventDefault();
+});
+marketForm.addEventListener('input', () => { $('#market-unsaved').hidden = !marketFormChanged(); });
+window.addEventListener('beforeunload', (event) => {
+  if (!marketDialog.open || !marketFormChanged()) return;
+  event.preventDefault();
+  event.returnValue = '';
+});
+marketForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const errorNode = $('#market-error');
+  try {
+    const base = (data.marketPrices?.records ?? []).find((record) => record.id === editingMarket?.id) ?? null;
+    const next = normalizeMarketRecord({
+      id: editingMarket?.id ?? crypto.randomUUID(), kindKey: marketKindKey,
+      date: marketForm.elements.date.value, currency: marketForm.elements.currency.value.trim(),
+      price: Number(marketForm.elements.price.value), shop: marketForm.elements.shop.value.trim(), note: marketForm.elements.note.value.trim(),
+    });
+    await savePending(recordMarketEdit(pending, base, next, new Date().toISOString()));
+    marketDialog.close();
+    render();
+    const kind = buildKinds(view.rows).find((item) => item.kindKey === detailKindKey);
+    if (kind && detail.open) openDetail(kind);
+    if (marketListDialog.open) renderMarketList();
+    showNotice('市場價格已加入待回傳；匯出後需在電腦審核。');
+  } catch (error) { errorNode.textContent = error.message; errorNode.hidden = false; }
+});
 
 const viewer = $('#viewer');
 function openViewer(src) {
@@ -422,9 +557,10 @@ function render() {
   hint.hidden = true;
   hint.classList.remove('error');
   if (!data) return;
+  marketKindKeys = new Set(currentMarketRecords().map((record) => record.kindKey));
   if (scanResult && !search.value.trim()) { renderScan(); return; }
   const rows = filterRows(pendingOnly ? pendingRows(view.rows) : view.rows, filters);
-  const filtered = pendingOnly || ['status', 'language', 'code', 'bulba'].some((key) => filters[key]);
+  const filtered = pendingOnly || filters.code.length > 0 || ['status', 'language', 'bulba'].some((key) => filters[key]);
   const query = search.value.trim();
 
   if (!query) {
@@ -454,14 +590,51 @@ search.addEventListener('input', () => { if (scanResult) clearScan(); clearTimeo
 filterToggle.addEventListener('click', () => {
   filterPanel.hidden = !filterPanel.hidden;
   filterToggle.setAttribute('aria-expanded', String(!filterPanel.hidden));
+  if (filterPanel.hidden) setCodeMenuOpen(false);
 });
 for (const [key, select] of Object.entries(controls)) {
   select.addEventListener('change', () => { filters[key] = select.value; saveFilters(); updateFilterToggle(); render(); });
 }
+codeButton.addEventListener('click', () => setCodeMenuOpen(codeMenu.hidden));
+codeMenu.addEventListener('click', (event) => {
+  if (!event.target.closest('.code-clear')) return;
+  filters.code = [];
+  fillCodeMenu();
+  saveFilters();
+  updateFilterToggle();
+  render();
+});
+codeMenu.addEventListener('change', (event) => {
+  const input = event.target;
+  if (input.matches('.code-option-input')) filters.code = toggleCodeSelection(filters.code, [input.value]);
+  else if (input.matches('.code-group-input')) {
+    const group = codeGroups(view.rows).find((item) => item.label === input.dataset.group);
+    if (!group) return;
+    filters.code = toggleCodeSelection(filters.code, group.codes);
+  } else return;
+  const focusValue = input.value;
+  const focusGroup = input.dataset.group;
+  fillCodeMenu();
+  [...codeMenu.querySelectorAll('input')].find((item) => focusGroup ? item.dataset.group === focusGroup : item.value === focusValue)?.focus();
+  saveFilters();
+  updateFilterToggle();
+  render();
+});
+document.addEventListener('pointerdown', (event) => {
+  if (!codeFilter.contains(event.target)) setCodeMenuOpen(false);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || codeMenu.hidden) return;
+  event.preventDefault();
+  setCodeMenuOpen(false);
+  codeButton.focus();
+});
 $('#f-clear').addEventListener('click', () => {
   pendingOnly = false;
-  filters = { ...DEFAULT_FILTERS };
+  filters = { ...DEFAULT_FILTERS, code: [] };
   for (const [key, select] of Object.entries(controls)) select.value = filters[key];
+  setCodeMenuOpen(false);
+  fillCodeMenu();
   search.value = '';
   clearScan();
   saveFilters();
@@ -482,14 +655,15 @@ let editingRowKey = '';
 
 function refreshView() {
   view = data ? applyPending(data, pending) : null;
+  if (view) fillCodeMenu();
   const count = pendingCount();
   pendingButton.hidden = !data || count === 0;
   pendingButton.textContent = `待回傳 ${count}`;
   updatePendingMode();
 }
 
-const pendingCount = () => Object.keys(pending.edits).length + pending.additions.length;
-const pendingClearText = () => `${pendingCount()} 筆待回傳（${Object.keys(pending.edits).length} 筆修改、${pending.additions.length} 筆新增）`;
+const pendingCount = () => Object.keys(pending.edits).length + pending.additions.length + Object.keys(pending.marketPrices ?? {}).length;
+const pendingClearText = () => `${pendingCount()} 筆待回傳（${Object.keys(pending.edits).length} 筆卡片修改、${pending.additions.length} 筆新增卡、${Object.keys(pending.marketPrices ?? {}).length} 筆市場價格）`;
 
 async function savePending(next) {
   pending = next;
@@ -509,7 +683,6 @@ const shown = (value) => (value === '' || value == null ? '（空白）' : Strin
 const fillSelect = (select, values) => select.replaceChildren(...values.map((value) => option(value, value || '（空白）')));
 fillSelect(editForm.elements.狀態, STATUS_ORDER);
 fillSelect(editForm.elements.幣別, CURRENCY_OPTIONS);
-fillSelect(editForm.elements.卡片狀態, CONDITION_OPTIONS);
 
 function openEdit(rowKey) {
   const row = view.rows.find((item) => item.RowKey === rowKey);
@@ -563,7 +736,6 @@ fillSelect(additionForm.elements.Language, LANGUAGE_OPTIONS);
 fillSelect(additionForm.elements.變體, VARIANT_OPTIONS);
 fillSelect(additionForm.elements.狀態, STATUS_ORDER);
 fillSelect(additionForm.elements.幣別, CURRENCY_OPTIONS);
-fillSelect(additionForm.elements.卡片狀態, CONDITION_OPTIONS);
 
 function openAddition(mode, copyOf = '', scanFile = null) {
   additionMode = mode;
@@ -676,11 +848,22 @@ function openPending() {
       } }),
     ]);
   });
-  $('#pending-list').replaceChildren(...items, ...additions);
-  $('#pending-note').textContent = `${items.length} 筆修改、${additions.length} 筆新增。`
+  const prices = Object.values(pending.marketPrices ?? {}).map((change) => element('li', {}, [
+    element('strong', { textContent: `市場價格：${change.next.kindKey}` }),
+    element('span', { className: 'pending-changes', textContent: `${change.next.date} · ${change.next.price} ${change.next.currency} · ${change.next.shop || '未填商店'}${change.next.note ? ` · ${change.next.note}` : ''}` }),
+    element('button', { type: 'button', className: 'text-button', textContent: '取消這筆', onclick: async () => {
+      const marketPrices = { ...(pending.marketPrices ?? {}) };
+      delete marketPrices[change.id];
+      await savePending({ ...pending, marketPrices });
+      render();
+      openPending();
+    } }),
+  ]));
+  $('#pending-list').replaceChildren(...items, ...additions, ...prices);
+  $('#pending-note').textContent = `${items.length} 筆卡片修改、${additions.length} 筆新增卡、${prices.length} 筆市場價格。`
     + (pending.lastExportedAt ? `上次匯出：${formatDate(pending.lastExportedAt)}。` : '')
     + '匯出後仍會保留；確認重新匯入或還原資料時，所有待回傳都會清除。';
-  $('#pending-export').disabled = !items.length && !pending.additions.length;
+  $('#pending-export').disabled = !items.length && !pending.additions.length && !prices.length;
   if (!pendingDialog.open) pendingDialog.showModal();
 }
 pendingButton.addEventListener('click', openPending);
@@ -692,7 +875,7 @@ $('#pending-export').addEventListener('click', async () => {
   const stamp = `${at.getFullYear()}${pad(at.getMonth() + 1)}${pad(at.getDate())}-${pad(at.getHours())}${pad(at.getMinutes())}`;
   const exportId = `${stamp}${pad(at.getSeconds())}-${Math.random().toString(16).slice(2, 6)}`;
   const changes = buildMobileChanges(pending, {
-    base: { sourceRevision: data.sourceRevision, exportedAt: data.exportedAt }, exportedAt: at.toISOString(), exportId,
+    base: { sourceRevision: data.sourceRevision, marketRevision: data.marketPrices?.revision ?? '', exportedAt: data.exportedAt }, exportedAt: at.toISOString(), exportId,
   });
   const problems = validateMobileChanges(changes);
   if (problems.length) { $('#pending-note').textContent = `變更檔驗證失敗：${problems.slice(0, 3).join('；')}`; return; }
@@ -743,6 +926,7 @@ $('#file').addEventListener('change', async (event) => {
   const entries = [
     ['匯出時間', `${formatDate(parsed.exportedAt)}（${daysSince(parsed.exportedAt)} 天前）`],
     ['列數', String(parsed.rowCount)],
+    ['市場價格紀錄', `${parsed.marketPrices?.records?.length ?? 0} 筆`],
     ['縮圖', `${Object.keys(parsed.thumbs).length} 張`],
     ...(diff ? [['新增', `${diff.added} 列`], ['移除', `${diff.removed} 列`], ['狀態改變', `${diff.changed} 列`]] : []),
   ];
@@ -796,7 +980,7 @@ $('#restore').addEventListener('click', async () => {
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 loadFilters();
 data = await dbGet('current');
-pending = (await dbGet('pending')) ?? emptyPending();
+pending = { ...emptyPending(), ...((await dbGet('pending')) ?? {}) };
 refreshView();
 await refreshInfo();
 render();
