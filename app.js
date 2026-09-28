@@ -9,7 +9,7 @@ import {
   validateAddition, validateMobileChanges, validateMobileExport,
 } from './lib/mobile_format.mjs';
 import { MATCH_PARAMS, MATCH_VERSION, classifyMatches, matchGroups } from './lib/card_match.mjs';
-import { kindKeyFromRowKey, normalizeMarketRecord, pricesForKind, recordMarketEdit } from './lib/market_prices.mjs';
+import { kindKeyFromRowKey, normalizeMarketRecord, pricesForKind, recordMarketDelete, recordMarketEdit } from './lib/market_prices.mjs';
 
 const STALE_DAYS = 14;
 const FILTER_STORAGE = 'bulba-mobile-filters';
@@ -105,7 +105,10 @@ function fillCodeMenu() {
   filters.code = normalizeCodeSelection(filters.code, groups.flatMap((group) => group.codes));
   codeButton.textContent = filters.code.length ? `已選 ${filters.code.length} 個代碼` : '全部官方代碼';
   const scroll = codeMenu.scrollTop;
-  const clear = element('button', { type: 'button', className: 'code-clear', textContent: '全部官方代碼' });
+  const actions = element('div', { className: 'code-menu-actions' }, [
+    element('button', { type: 'button', className: 'code-clear', textContent: '清除' }),
+    element('button', { type: 'button', className: 'code-confirm', textContent: '確定' }),
+  ]);
   const sections = groups.map((group) => {
     const chosen = group.codes.filter((code) => filters.code.includes(code)).length;
     const groupInput = element('input', { type: 'checkbox', className: 'code-group-input', checked: chosen === group.codes.length });
@@ -117,7 +120,7 @@ function fillCodeMenu() {
     ]));
     return element('section', { className: 'code-group' }, [heading, element('div', { className: 'code-options' }, items)]);
   });
-  codeMenu.replaceChildren(clear, ...sections);
+  codeMenu.replaceChildren(actions, element('div', { className: 'code-menu-options' }, sections));
   codeMenu.scrollTop = scroll;
 }
 function setCodeMenuOpen(open) {
@@ -239,7 +242,10 @@ let marketListKindKey = '';
 const marketListDialog = $('#market-list-dialog');
 function currentMarketRecords() {
   const records = new Map((data?.marketPrices?.records ?? []).map((record) => [record.id, record]));
-  for (const change of Object.values(pending.marketPrices ?? {})) records.set(change.id, change.next);
+  for (const change of Object.values(pending.marketPrices ?? {})) {
+    if (change.next === null) records.delete(change.id);
+    else records.set(change.id, change.next);
+  }
   return [...records.values()];
 }
 
@@ -260,7 +266,11 @@ function renderMarketList() {
     return element('div', { className: 'market-record' }, [
       element('div', { className: 'market-record-top' }, [
         element('strong', { textContent: summary }),
-        element('button', { type: 'button', className: 'edit-button', textContent: '修改', onclick: () => openMarketForm(marketListKindKey, record) }),
+        element('div', { className: 'market-record-actions' }, [
+          element('button', { type: 'button', className: 'edit-button', textContent: '修改', onclick: () => openMarketForm(marketListKindKey, record) }),
+          element('button', { type: 'button', className: 'edit-button market-delete', textContent: '刪除',
+            ariaLabel: `刪除 ${record.date} 的市場價格紀錄`, onclick: () => deleteMarketPrice(record) }),
+        ]),
       ]),
       record.note ? element('span', { className: 'market-record-meta', textContent: `備註：${record.note}` }) : '',
     ]);
@@ -278,6 +288,22 @@ function openMarketList(kindKey) {
 $('#market-list-close').addEventListener('click', () => marketListDialog.close());
 marketListDialog.addEventListener('click', (event) => { if (event.target === marketListDialog) marketListDialog.close(); });
 $('#market-list-add').addEventListener('click', () => openMarketForm(marketListKindKey));
+
+async function deleteMarketPrice(record) {
+  const base = (data.marketPrices?.records ?? []).find((item) => item.id === record.id) ?? null;
+  const message = base
+    ? `將 ${record.date} · ${record.price} ${record.currency} 這筆市場價格列為待刪除？匯出後仍須在電腦審核。`
+    : `取消 ${record.date} · ${record.price} ${record.currency} 這筆尚未回傳的市場價格？`;
+  if (!confirm(message)) return;
+  try {
+    await savePending(recordMarketDelete(pending, base, record, new Date().toISOString()));
+    render();
+    const kind = buildKinds(view.rows).find((item) => item.kindKey === detailKindKey);
+    if (kind && detail.open) openDetail(kind);
+    renderMarketList();
+    showNotice(base ? '市場價格已列為待刪除；匯出後需在電腦審核。' : '已取消這筆尚未回傳的市場價格。');
+  } catch (error) { showNotice(`刪除市場價格失敗：${error.message}`); }
+}
 
 function openDetail(kind) {
   detailKindKey = kind.kindKey;
@@ -610,12 +636,17 @@ for (const [key, select] of Object.entries(controls)) {
 }
 codeButton.addEventListener('click', () => setCodeMenuOpen(codeMenu.hidden));
 codeMenu.addEventListener('click', (event) => {
-  if (!event.target.closest('.code-clear')) return;
-  filters.code = [];
-  fillCodeMenu();
-  saveFilters();
-  updateFilterToggle();
-  render();
+  if (event.target.closest('.code-clear')) {
+    filters.code = [];
+    fillCodeMenu();
+    codeMenu.querySelector('.code-clear').focus();
+    saveFilters();
+    updateFilterToggle();
+    render();
+  } else if (event.target.closest('.code-confirm')) {
+    setCodeMenuOpen(false);
+    codeButton.focus();
+  }
 });
 codeMenu.addEventListener('change', (event) => {
   const input = event.target;
@@ -861,17 +892,20 @@ function openPending() {
       } }),
     ]);
   });
-  const prices = Object.values(pending.marketPrices ?? {}).map((change) => element('li', {}, [
-    element('strong', { textContent: `市場價格：${change.next.kindKey}` }),
-    element('span', { className: 'pending-changes', textContent: `${change.next.date} · ${change.next.price} ${change.next.currency} · ${change.next.shop || '未填商店'}${change.next.note ? ` · ${change.next.note}` : ''}` }),
-    element('button', { type: 'button', className: 'text-button', textContent: '取消這筆', onclick: async () => {
-      const marketPrices = { ...(pending.marketPrices ?? {}) };
-      delete marketPrices[change.id];
-      await savePending({ ...pending, marketPrices });
-      render();
-      openPending();
-    } }),
-  ]));
+  const prices = Object.values(pending.marketPrices ?? {}).map((change) => {
+    const record = change.next ?? change.previous;
+    return element('li', {}, [
+      element('strong', { textContent: `${change.next === null ? '刪除市場價格' : '市場價格'}：${record.kindKey}` }),
+      element('span', { className: 'pending-changes', textContent: `${record.date} · ${record.price} ${record.currency} · ${record.shop || '未填商店'}${record.note ? ` · ${record.note}` : ''}` }),
+      element('button', { type: 'button', className: 'text-button', textContent: '取消這筆', onclick: async () => {
+        const marketPrices = { ...(pending.marketPrices ?? {}) };
+        delete marketPrices[change.id];
+        await savePending({ ...pending, marketPrices });
+        render();
+        openPending();
+      } }),
+    ]);
+  });
   $('#pending-list').replaceChildren(...items, ...additions, ...prices);
   $('#pending-note').textContent = `${items.length} 筆卡片修改、${additions.length} 筆新增卡、${prices.length} 筆市場價格。`
     + (pending.lastExportedAt ? `上次匯出：${formatDate(pending.lastExportedAt)}。` : '')
