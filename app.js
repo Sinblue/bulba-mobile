@@ -255,11 +255,14 @@ function renderMarketList() {
   $('#market-list-title').textContent = `${kind?.cardName || '待補卡名'} · 市場價格紀錄（${records.length} 筆）`;
   const existsOnComputer = data.rows.some((row) => kindKeyFromRowKey(row.RowKey) === marketListKindKey);
   const nodes = records.map((record) => {
-    const pendingMark = pending.marketPrices?.[record.id] ? ' · 待回傳' : '';
+    const summary = [record.date, String(record.price), record.currency, record.shop,
+      pending.marketPrices?.[record.id] ? '待回傳' : ''].filter(Boolean).join(' · ');
     return element('div', { className: 'market-record' }, [
-      element('strong', { textContent: `${record.date} · ${record.price} ${record.currency}${pendingMark}` }),
-      element('span', { className: 'market-record-meta', textContent: [record.shop, record.note].filter(Boolean).join(' · ') }),
-      element('button', { type: 'button', className: 'edit-button', textContent: '修改', onclick: () => openMarketForm(marketListKindKey, record) }),
+      element('div', { className: 'market-record-top' }, [
+        element('strong', { textContent: summary }),
+        element('button', { type: 'button', className: 'edit-button', textContent: '修改', onclick: () => openMarketForm(marketListKindKey, record) }),
+      ]),
+      record.note ? element('span', { className: 'market-record-meta', textContent: `備註：${record.note}` }) : '',
     ]);
   });
   if (!nodes.length) nodes.push(element('p', { className: 'preview-note', textContent: existsOnComputer
@@ -284,6 +287,11 @@ function openDetail(kind) {
     : String(first.Name).replace(/\s#\d+$/, '');
   const image = imageNode(kind.thumb, 'detail-image');
   if (image.tagName === 'IMG') image.addEventListener('click', () => openViewer(image.src));
+  const imagePanel = element('div', { className: 'detail-image-panel' }, [
+    first.卡圖URL ? element('a', { className: 'original', href: first.卡圖URL, target: '_blank',
+      rel: 'noopener noreferrer', textContent: '開原圖' }) : '',
+    image,
+  ]);
 
   const cardInfo = element('dl', {}, [
     ...(kind.rows.length === 1 ? item('RowKey', first.RowKey) : []),
@@ -308,8 +316,7 @@ function openDetail(kind) {
   const copySource = kind.rows.find((row) => !row.mobileId);
   if (copySource) info.append(element('button', { type: 'button', className: 'edit-button add-copy-button', textContent: '多買一張',
     onclick: () => openAddition('copy', copySource.RowKey) }));
-  if (first.卡圖URL) info.append(element('a', { className: 'original', href: first.卡圖URL, target: '_blank', rel: 'noopener noreferrer', textContent: '開原圖' }));
-  $('#detail-body').replaceChildren(image, info);
+  $('#detail-body').replaceChildren(imagePanel, info);
   if (!detail.open) detail.showModal();
 }
 $('#detail-close').addEventListener('click', () => detail.close());
@@ -591,6 +598,12 @@ filterToggle.addEventListener('click', () => {
   filterPanel.hidden = !filterPanel.hidden;
   filterToggle.setAttribute('aria-expanded', String(!filterPanel.hidden));
   if (filterPanel.hidden) setCodeMenuOpen(false);
+});
+$('#f-confirm').addEventListener('click', () => {
+  setCodeMenuOpen(false);
+  filterPanel.hidden = true;
+  filterToggle.setAttribute('aria-expanded', 'false');
+  filterToggle.focus();
 });
 for (const [key, select] of Object.entries(controls)) {
   select.addEventListener('change', () => { filters[key] = select.value; saveFilters(); updateFilterToggle(); render(); });

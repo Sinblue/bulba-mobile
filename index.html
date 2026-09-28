@@ -29,7 +29,7 @@
       <label id="scan-button" class="scan-button disabled" aria-label="拍照比對卡圖" title="拍照比對卡圖">📷<input id="scan" type="file" accept="image/*" capture="environment" hidden disabled></label>
       <input id="scan-pick" type="file" accept="image/*" hidden disabled>
     </div>
-    <label id="scan-album" class="scan-album" for="scan-pick" hidden>或直接從相簿選取</label>
+    <label id="scan-album" class="scan-album" for="scan-pick" hidden>從相簿</label>
     <p id="scan-status" class="scan-status" hidden></p>
     <div id="pending-mode" class="pending-mode" hidden>
       <span id="pending-mode-label"></span>
@@ -45,9 +45,12 @@
       </div>
       <label>妙蛙系列 <select id="f-bulba"><option value="">全部</option><option value="bulba">妙蛙系列</option><option value="other">其他</option></select></label>
       <label>排序 <select id="f-sort"></select></label>
-      <button id="f-clear" class="clear-button" type="button">清除</button>
-      <button id="f-pending" class="pending-filter-button" type="button" aria-pressed="false" disabled>只看待回傳 0</button>
       <p class="filter-note">有輸入搜尋字時，結果依相關度排序。</p>
+      <button id="f-pending" class="pending-filter-button" type="button" aria-pressed="false" disabled>只看待回傳 0</button>
+      <div class="filter-actions">
+        <button id="f-clear" class="clear-button" type="button">清除</button>
+        <button id="f-confirm" class="confirm-button" type="button">確認</button>
+      </div>
     </section>
   </header>
 

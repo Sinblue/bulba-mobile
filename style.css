@@ -34,7 +34,10 @@ h2 { margin:0; font-size:16px; }
 .code-option:has(input:checked) { border-color:var(--accent); background:color-mix(in srgb,var(--accent) 12%,var(--bg)); }
 .code-option input,.code-group-toggle input { flex:none; width:auto; margin:0; accent-color:var(--accent); }
 .code-option:focus-within,.code-group-toggle:focus-within,.code-filter-button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-.clear-button { align-self:end; min-height:38px; border:1px solid var(--line); border-radius:8px; background:transparent; color:var(--text); font-weight:650; cursor:pointer; }
+.filter-actions { grid-column:1 / -1; display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.filter-actions button { min-height:38px; border-radius:8px; font-weight:650; cursor:pointer; }
+.clear-button { border:1px solid var(--line); background:transparent; color:var(--text); }
+.confirm-button { border:1px solid var(--accent); background:var(--accent); color:var(--surface); }
 .pending-filter-button { grid-column:1 / -1; min-height:40px; border:1px solid var(--note); border-radius:8px; background:transparent; color:var(--note); font-weight:750; cursor:pointer; }
 .pending-filter-button[aria-pressed="true"] { background:color-mix(in srgb,var(--note) 14%,transparent); }
 .pending-filter-button:disabled { opacity:.5; cursor:default; }
@@ -84,6 +87,7 @@ dialog::backdrop { background:#0008; }
 /* 詳細資料：左卡圖、右欄位（同本機目錄的唯讀欄位＋收藏欄位） */
 dialog.detail { width:min(600px,calc(100vw - 16px)); }
 .detail-body { display:grid; grid-template-columns:minmax(0,46%) minmax(0,1fr); gap:12px; align-items:start; padding:12px; }
+.detail-image-panel { min-width:0; }
 .detail-image { display:block; width:100%; aspect-ratio:2.5 / 3.5; object-fit:contain; border-radius:8px; background:var(--img); cursor:zoom-in; }
 .detail-image.placeholder { display:grid; place-items:center; color:var(--muted); font-size:12px; cursor:default; }
 .detail-info { min-width:0; font-size:13px; }
@@ -97,13 +101,15 @@ dialog.detail { width:min(600px,calc(100vw - 16px)); }
 .market-list-body { padding:12px 14px 16px; }
 .market-add-button { width:100%; min-height:42px; margin-top:12px; border:1px solid var(--accent); border-radius:8px; background:transparent; color:var(--accent); font-weight:750; cursor:pointer; }
 .market-record { display:grid; gap:3px; padding:8px 0; border-bottom:1px solid var(--line); font-size:12px; }
+.market-record-top { display:flex; align-items:flex-start; gap:8px; }
+.market-record-top strong { min-width:0; overflow-wrap:anywhere; }
 .market-record-meta { color:var(--muted); overflow-wrap:anywhere; }
-.market-record .edit-button { justify-self:start; margin-left:0; }
+.market-record-top .edit-button { flex:none; margin-left:auto; }
 .market-unsaved { margin:8px 0 0; color:var(--warn); font-size:12px; font-weight:750; }
 .market-unsaved[hidden] { display:none; }
 .readonly-note { margin:10px 0 0; color:var(--muted); font-size:11px; }
 .muted { color:var(--muted); }
-.original { display:inline-block; margin-top:8px; color:var(--accent); font-size:13px; }
+.original { display:inline-block; margin-bottom:8px; color:var(--accent); font-size:13px; }
 .viewer { width:100vw; max-width:none; height:100vh; max-height:none; margin:0; padding:16px; border:0; background:transparent; overflow:hidden; }
 .viewer::backdrop { background:rgb(0 0 0 / 86%); }
 .viewer img { display:block; max-width:100%; max-height:100%; margin:auto; border-radius:10px; }
