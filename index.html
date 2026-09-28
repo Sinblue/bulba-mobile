@@ -109,7 +109,7 @@
       <p id="market-kind" class="preview-note"></p>
       <div class="edit-grid">
         <label>日期 <input name="date" type="date" required></label>
-        <label>幣值 <input name="currency" type="text" maxlength="12" required placeholder="例如 NT"></label>
+        <label>幣值 <select name="currency" required><option value="NT">NT</option><option value="JPY">JPY</option><option value="USD">USD</option></select></label>
         <label>價格 <input name="price" type="number" inputmode="decimal" min="0" max="1000000000" step="any" required></label>
         <label>商店 <input name="shop" type="text" maxlength="200" placeholder="選填"></label>
         <label class="wide">備註 <textarea name="note" rows="3" maxlength="2000" placeholder="選填"></textarea></label>
