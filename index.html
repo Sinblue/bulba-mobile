@@ -13,7 +13,15 @@
 <body>
   <header class="top">
     <div class="title-row">
-      <h1>妙蛙收藏查詢</h1>
+      <div class="title-brand">
+        <div id="settings-menu" class="settings-menu">
+          <button id="settings-toggle" class="settings-toggle" type="button" aria-label="設定" aria-expanded="false" aria-controls="settings-options">⚙️</button>
+          <div id="settings-options" class="settings-options" hidden>
+            <button id="restore" class="settings-option" type="button" disabled>目前沒有上一份資料</button>
+          </div>
+        </div>
+        <h1>妙蛙收藏查詢</h1>
+      </div>
       <div class="title-actions">
         <button id="add-button" class="add-button" type="button" disabled>＋ 新增卡</button>
         <button id="pending-button" class="pending-button" type="button" hidden>待回傳 0</button>
@@ -32,8 +40,8 @@
     <div class="quick-filters">
       <button id="favorite-only" class="quick-filter" type="button" aria-pressed="false" aria-label="只看我的最愛" title="只看我的最愛" disabled><span class="quick-filter-icon favorite-filter-icon" aria-hidden="true">☆</span></button>
       <button id="market-only" class="quick-filter" type="button" aria-pressed="false" aria-label="只看有市場價格的卡片" title="只看有市場價格的卡片" disabled><span class="quick-filter-icon market-filter-icon" aria-hidden="true">$</span></button>
+      <label id="scan-album" class="quick-filter scan-album" for="scan-pick" aria-label="從相簿選取照片" title="從相簿選取照片" hidden>🖼️</label>
     </div>
-    <label id="scan-album" class="scan-album" for="scan-pick" hidden>從相簿</label>
     <p id="scan-status" class="scan-status" hidden></p>
     <div id="pending-mode" class="pending-mode" hidden>
       <span id="pending-mode-label"></span>
@@ -72,7 +80,6 @@
     <p id="multi-note" class="multi-note" hidden>同卡號／張數出現在多個系列，請看卡面代碼確認是哪一張。</p>
     <p id="empty" class="empty" hidden></p>
     <div id="results"></div>
-    <p class="footer-actions"><button id="restore" class="text-button" type="button" hidden>還原上一份資料</button></p>
   </main>
 
   <dialog id="preview">

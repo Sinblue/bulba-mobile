@@ -38,6 +38,10 @@ const scanInput = $('#scan');
 const scanPick = $('#scan-pick');
 const scanAlbum = $('#scan-album');
 const scanStatus = $('#scan-status');
+const settingsMenu = $('#settings-menu');
+const settingsToggle = $('#settings-toggle');
+const settingsOptions = $('#settings-options');
+const restoreButton = $('#restore');
 let data = null;       // 匯入資料（不修改）
 let pending = emptyPending(); // 待回傳的卡片、價格與最愛變更
 let view = null;       // 顯示用：data ＋ pending
@@ -212,6 +216,21 @@ const formatDate = (iso) => {
 };
 const daysSince = (iso) => Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
 
+function setSettingsOpen(open) {
+  settingsOptions.hidden = !open;
+  settingsToggle.setAttribute('aria-expanded', String(open));
+}
+settingsToggle.addEventListener('click', () => setSettingsOpen(settingsOptions.hidden));
+document.addEventListener('pointerdown', (event) => {
+  if (!settingsMenu.contains(event.target)) setSettingsOpen(false);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || settingsOptions.hidden) return;
+  event.preventDefault();
+  setSettingsOpen(false);
+  settingsToggle.focus();
+});
+
 function imageNode(key, className) {
   const src = key && view.thumbs[key];
   if (src) return element('img', { className, src, alt: '', loading: 'lazy', decoding: 'async' });
@@ -229,7 +248,9 @@ async function refreshInfo() {
   $('#add-button').disabled = !ready;
   $('#scan-button').classList.toggle('disabled', !ready);
   $('#welcome').hidden = ready;
-  $('#restore').hidden = !(await dbGet('previous'));
+  const previous = await dbGet('previous');
+  restoreButton.disabled = !previous;
+  restoreButton.textContent = previous ? '還原上一份資料' : '目前沒有上一份資料';
   if (!ready) { info.textContent = '尚未匯入資料'; info.className = 'data-info'; return; }
   fillFilterOptions();
   updateFilterToggle();
@@ -1084,7 +1105,9 @@ preview.querySelector('form').addEventListener('submit', async (event) => {
   prepareIfStale();
 });
 
-$('#restore').addEventListener('click', async () => {
+restoreButton.addEventListener('click', async () => {
+  setSettingsOpen(false);
+  settingsToggle.focus();
   const previous = await dbGet('previous');
   if (!previous) return;
   const removed = pendingCount();

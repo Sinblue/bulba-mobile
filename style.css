@@ -9,6 +9,14 @@ h2 { margin:0; font-size:16px; }
 /* 頂部：標題、資料時間、搜尋、篩選 */
 .top { position:sticky; top:0; z-index:2; padding:12px 14px 10px; padding-top:max(12px, env(safe-area-inset-top)); background:var(--bg); border-bottom:1px solid var(--line); }
 .title-row { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px 12px; }
+.title-brand { display:flex; align-items:center; gap:2px; }
+.settings-menu { position:relative; flex:none; }
+.settings-toggle { display:grid; place-items:center; width:40px; height:40px; padding:0; border:0; background:transparent; color:var(--text); font-size:22px; line-height:1; cursor:pointer; }
+.settings-options { position:absolute; top:calc(100% + 4px); left:0; z-index:5; min-width:190px; padding:5px; border:1px solid var(--line); border-radius:8px; background:var(--surface); box-shadow:0 8px 24px #0003; }
+.settings-options[hidden] { display:none; }
+.settings-option { display:block; width:100%; min-height:40px; padding:8px 10px; border:0; border-radius:6px; background:transparent; color:var(--text); text-align:left; cursor:pointer; }
+.settings-option:hover:not(:disabled) { background:color-mix(in srgb,var(--accent) 10%,var(--surface)); }
+.settings-option:disabled { color:var(--muted); cursor:default; }
 .import-button { border:1px solid var(--line); border-radius:8px; padding:6px 12px; font-size:13px; font-weight:650; cursor:pointer; }
 .data-info { margin:4px 0 8px; color:var(--muted); font-size:12px; }
 .data-info.stale { color:var(--warn); font-weight:650; }
@@ -16,12 +24,12 @@ h2 { margin:0; font-size:16px; }
 .search { flex:1; min-width:0; min-height:44px; padding:8px 12px; border:1px solid var(--line); border-radius:10px; background:var(--surface); color:var(--text); font-size:16px; }
 .search:focus { outline:2px solid var(--accent); outline-offset:1px; }
 .quick-filters { display:flex; gap:8px; margin-top:7px; }
-.quick-filter { display:grid; place-items:center; flex:none; width:44px; height:44px; padding:0; border:1px solid var(--line); border-radius:8px; background:var(--bg); cursor:pointer; }
+.quick-filter { display:grid; place-items:center; flex:none; width:44px; height:44px; padding:0; border:1px solid var(--line); border-radius:8px; background:var(--surface); cursor:pointer; }
 .quick-filter:disabled { opacity:.5; cursor:default; }
-.quick-filter-icon { display:grid; place-items:center; width:24px; height:24px; border:1px solid var(--icon-color); border-radius:50%; background:var(--bg); color:var(--icon-color); font-size:16px; line-height:1; }
+.quick-filter-icon { display:grid; place-items:center; width:24px; height:24px; border:1px solid var(--icon-color); border-radius:50%; background:var(--surface); color:var(--icon-color); font-size:16px; line-height:1; }
 .favorite-filter-icon { --icon-color:#F59E0B; }
 .market-filter-icon { --icon-color:#22C55E; font-size:15px; font-weight:800; }
-.quick-filter[aria-pressed="true"] .quick-filter-icon { background:var(--icon-color); color:var(--bg); }
+.quick-filter[aria-pressed="true"] .quick-filter-icon { background:var(--icon-color); color:var(--surface); }
 .filter-toggle { flex:none; min-height:44px; padding:0 14px; border:1px solid var(--line); border-radius:10px; background:var(--surface); color:var(--text); font-weight:650; cursor:pointer; }
 .filter-toggle.active { border-color:var(--accent); color:var(--accent); }
 .filters { display:grid; grid-template-columns:1fr 1fr; gap:8px 10px; margin-top:10px; }
@@ -134,7 +142,6 @@ dialog.detail { width:min(600px,calc(100vw - 16px)); }
 .viewer img { display:block; max-width:100%; max-height:100%; margin:auto; border-radius:10px; }
 .viewer-close { position:fixed; top:14px; right:14px; width:40px; height:40px; border:1px solid rgb(255 255 255 / 45%); border-radius:50%; background:rgb(0 0 0 / 45%); color:#fff; font-size:26px; line-height:1; cursor:pointer; }
 
-.footer-actions { text-align:center; }
 .text-button { border:0; background:transparent; color:var(--muted); text-decoration:underline; cursor:pointer; }
 dialog dl { display:grid; grid-template-columns:max-content 1fr; gap:4px 12px; }
 dialog dt { color:var(--muted); } dialog dd { margin:0; }
@@ -145,9 +152,9 @@ dialog dt { color:var(--muted); } dialog dd { margin:0; }
 .error { color:var(--warn); white-space:pre-line; }
 
 /* 卡圖比對（第 1 階段） */
-.scan-button { flex:none; display:grid; place-items:center; min-width:48px; min-height:44px; padding:0 10px; border:1px solid var(--line); border-radius:10px; background:var(--surface); font-size:20px; cursor:pointer; }
+.scan-button { flex:none; display:grid; place-items:center; width:44px; height:44px; padding:0; border:1px solid var(--line); border-radius:8px; background:var(--surface); font-size:20px; cursor:pointer; }
 .scan-button.disabled { opacity:.45; pointer-events:none; }
-.scan-album { display:block; width:max-content; margin:4px 0 0 auto; color:var(--accent); font-size:12px; text-decoration:underline; cursor:pointer; }
+.scan-album { margin-left:auto; font-size:20px; }
 .scan-album[hidden] { display:none; }
 .scan-status { margin:8px 0 0; color:var(--muted); font-size:12px; }
 .scan-head { display:flex; gap:12px; align-items:center; margin:0 0 14px; padding:10px; border:1px solid var(--line); border-radius:10px; background:var(--surface); }
