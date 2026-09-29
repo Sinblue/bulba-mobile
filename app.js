@@ -9,7 +9,8 @@ import {
   validateAddition, validateMobileChanges, validateMobileExport,
 } from './lib/mobile_format.mjs';
 import { MATCH_PARAMS, MATCH_VERSION, classifyMatches, matchGroups } from './lib/card_match.mjs';
-import { kindKeyFromRowKey, normalizeMarketRecord, pricesForKind, recordMarketDelete, recordMarketEdit } from './lib/market_prices.mjs';
+import { filterMarketRows, kindKeyFromRowKey, normalizeMarketRecord, pricesForKind, recordMarketDelete, recordMarketEdit } from './lib/market_prices.mjs';
+import { currentFavoriteKeys, filterFavoriteRows, recordFavoriteToggle } from './lib/favorites.mjs';
 
 const STALE_DAYS = 14;
 const FILTER_STORAGE = 'bulba-mobile-filters';
@@ -26,6 +27,9 @@ const filterToggle = $('#filter-toggle');
 const filterPanel = $('#filters');
 const pendingFilter = $('#f-pending');
 const pendingMode = $('#pending-mode');
+const favoriteOnlyButton = $('#favorite-only');
+const marketOnlyButton = $('#market-only');
+const detailFavoriteButton = $('#detail-favorite');
 const controls = { status: $('#f-status'), language: $('#f-language'), bulba: $('#f-bulba'), sort: $('#f-sort') };
 const codeFilter = $('#code-filter');
 const codeButton = $('#f-code');
@@ -35,7 +39,7 @@ const scanPick = $('#scan-pick');
 const scanAlbum = $('#scan-album');
 const scanStatus = $('#scan-status');
 let data = null;       // 匯入資料（不修改）
-let pending = emptyPending(); // 待回傳的修改與新增
+let pending = emptyPending(); // 待回傳的卡片、價格與最愛變更
 let view = null;       // 顯示用：data ＋ pending
 let pendingImport = null;
 let filters = { ...DEFAULT_FILTERS };
@@ -44,6 +48,29 @@ let scanResult = null; // { photo, pending, ms, groups, error }
 let marketKindKey = '';
 let editingMarket = null;
 let marketKindKeys = new Set();
+const favoriteKeys = () => currentFavoriteKeys(data?.favorites, pending);
+
+function setFavoriteButton(button, kindKey) {
+  const selected = favoriteKeys().has(kindKey);
+  const waiting = Boolean(pending.favorites?.[kindKey]);
+  button.textContent = selected ? '★' : '☆';
+  button.setAttribute('aria-pressed', String(selected));
+  button.setAttribute('aria-label', `${selected ? '取消' : '加入'}我的最愛${waiting ? '（待回傳）' : ''}`);
+  button.title = waiting ? '最愛變更待回傳' : selected ? '取消我的最愛' : '加入我的最愛';
+}
+
+const savingFavorites = new Set();
+async function toggleFavorite(kindKey) {
+  if (!data || savingFavorites.has(kindKey)) return;
+  savingFavorites.add(kindKey);
+  try {
+    await savePending(recordFavoriteToggle(pending, data.favorites, kindKey, new Date().toISOString()));
+    render();
+    const kind = buildKinds(view.rows).find((item) => item.kindKey === detailKindKey);
+    if (kind && detail.open) openDetail(kind);
+  } catch (error) { showNotice(`我的最愛沒有儲存：${error.message}`); }
+  finally { savingFavorites.delete(kindKey); }
+}
 
 // ── IndexedDB：current＝目前資料，previous＝上一份 ──────────────
 
@@ -79,7 +106,8 @@ async function dbPutMany(entries) {
 function loadFilters() {
   try {
     const saved = JSON.parse(localStorage.getItem(FILTER_STORAGE) ?? 'null');
-    if (saved && typeof saved === 'object') filters = { ...DEFAULT_FILTERS, ...saved, code: normalizeCodeSelection(saved.code) };
+    if (saved && typeof saved === 'object') filters = { ...DEFAULT_FILTERS, ...saved, code: normalizeCodeSelection(saved.code),
+      favoriteOnly: saved.favoriteOnly === true, marketOnly: saved.marketOnly === true };
   } catch { filters = { ...DEFAULT_FILTERS, code: [] }; }
 }
 function saveFilters() {
@@ -130,15 +158,22 @@ function setCodeMenuOpen(open) {
 }
 function activeFilterCount() {
   return Object.keys(controls).filter((key) => filters[key] !== DEFAULT_FILTERS[key]).length
-    + Number(filters.code.length > 0) + Number(pendingOnly);
+    + Number(filters.code.length > 0) + Number(filters.favoriteOnly) + Number(filters.marketOnly) + Number(pendingOnly);
 }
 function updateFilterToggle() {
   const count = activeFilterCount();
   filterToggle.textContent = count ? `篩選 ${count}` : '篩選';
   filterToggle.classList.toggle('active', count > 0);
 }
+function updateQuickFilters() {
+  favoriteOnlyButton.disabled = !data;
+  favoriteOnlyButton.setAttribute('aria-pressed', String(Boolean(filters.favoriteOnly)));
+  favoriteOnlyButton.querySelector('.favorite-filter-icon').textContent = filters.favoriteOnly ? '★' : '☆';
+  marketOnlyButton.disabled = !data;
+  marketOnlyButton.setAttribute('aria-pressed', String(Boolean(filters.marketOnly)));
+}
 function updatePendingMode() {
-  const count = view ? pendingRows(view.rows).length : 0;
+  const count = view ? pendingRows(view.rows, Object.keys(pending.favorites ?? {})).length : 0;
   if (pendingOnly && count === 0) pendingOnly = false;
   pendingFilter.disabled = count === 0;
   pendingFilter.textContent = `只看待回傳 ${count}`;
@@ -157,6 +192,7 @@ function setPendingOnly(next) {
   clearScan();
   saveFilters();
   updatePendingMode();
+  updateQuickFilters();
   filterPanel.hidden = true;
   filterToggle.setAttribute('aria-expanded', 'false');
   render();
@@ -222,13 +258,17 @@ function tileNode(kind) {
       element('span', { className: 'tile-code', textContent: `${kind.code}-${kind.number}` }),
       tags,
       badgeNode(kind),
-      kind.rows.some((row) => row.pendingEdit || row.mobileId) ? element('span', { className: 'pending-mark', textContent: '待回傳' }) : '',
+      kind.rows.some((row) => row.pendingEdit || row.mobileId) || pending.favorites?.[kind.kindKey]
+        ? element('span', { className: 'pending-mark', textContent: '待回傳' }) : '',
       priceMark,
     ]),
   ]);
   if (priceMark) tile.title = '有市場價格紀錄';
   tile.addEventListener('click', () => openDetail(kind));
-  return tile;
+  const favorite = element('button', { className: 'favorite-star tile-favorite', type: 'button' });
+  setFavoriteButton(favorite, kind.kindKey);
+  favorite.addEventListener('click', () => toggleFavorite(kind.kindKey));
+  return element('div', { className: 'tile-wrap' }, [tile, favorite]);
 }
 
 // 詳細資料：欄位與本機目錄一致（唯讀欄位＋六個收藏欄位）；收藏欄位可在手機編輯，存成待回傳。
@@ -307,6 +347,7 @@ async function deleteMarketPrice(record) {
 
 function openDetail(kind) {
   detailKindKey = kind.kindKey;
+  setFavoriteButton(detailFavoriteButton, kind.kindKey);
   const first = kind.rows[0];
   $('#detail-title').textContent = kind.rows.length === 1
     ? first.Name
@@ -592,14 +633,21 @@ function render() {
   if (!data) return;
   marketKindKeys = new Set(currentMarketRecords().map((record) => record.kindKey));
   if (scanResult && !search.value.trim()) { renderScan(); return; }
-  const rows = filterRows(pendingOnly ? pendingRows(view.rows) : view.rows, filters);
-  const filtered = pendingOnly || filters.code.length > 0 || ['status', 'language', 'bulba'].some((key) => filters[key]);
+  const selectedRows = filterRows(pendingOnly ? pendingRows(view.rows, Object.keys(pending.favorites ?? {})) : view.rows, filters);
+  const favoriteRows = filters.favoriteOnly ? filterFavoriteRows(selectedRows, favoriteKeys()) : selectedRows;
+  const rows = filters.marketOnly ? filterMarketRows(favoriteRows, marketKindKeys) : favoriteRows;
+  const filtered = pendingOnly || filters.favoriteOnly || filters.marketOnly || filters.code.length > 0 || ['status', 'language', 'bulba'].some((key) => filters[key]);
   const query = search.value.trim();
 
   if (!query) {
     // 瀏覽模式：依篩選與排序列出所有卡種。
     const kinds = sortKinds(buildKinds(rows), filters.sort);
-    if (!kinds.length) { empty.textContent = pendingOnly ? '目前沒有待回傳的卡。' : '沒有符合篩選條件的卡。'; empty.hidden = false; return; }
+    if (!kinds.length) {
+      const label = filters.favoriteOnly && filters.marketOnly ? '最愛且有市場價格' : filters.favoriteOnly ? '最愛' : filters.marketOnly ? '有市場價格' : '';
+      empty.textContent = label ? `沒有符合條件的${label}卡片。` : pendingOnly ? '目前沒有待回傳的卡。' : '沒有符合篩選條件的卡。';
+      empty.hidden = false;
+      return;
+    }
     const owned = rows.filter((row) => row.狀態 === '已收藏').length;
     hint.textContent = `${pendingOnly ? '待回傳' : filtered ? '符合篩選' : '全部'} ${kinds.length} 種卡（${rows.length} 張，已收藏 ${owned}）。可輸入卡號／張數、代碼或卡名，多個詞用空白分開。`;
     hint.hidden = false;
@@ -607,7 +655,7 @@ function render() {
     return;
   }
 
-  const result = searchCards(rows, query, pendingOnly ? pendingRows(view.rows) : view.rows);
+  const result = searchCards(rows, query, pendingOnly ? pendingRows(view.rows, Object.keys(pending.favorites ?? {})) : view.rows);
   if (!result.groups.length) {
     empty.textContent = (pendingOnly ? '待回傳的卡中沒有找到符合的卡。' : '收藏清單中沒有找到符合的卡。這不代表確定沒有收藏——請確認輸入的卡號、張數，或改用卡名搜尋。')
       + (filtered ? '（目前有套用篩選，可按「篩選」→「清除」再查一次。）' : '');
@@ -682,9 +730,27 @@ $('#f-clear').addEventListener('click', () => {
   search.value = '';
   clearScan();
   saveFilters();
+  updateQuickFilters();
   updatePendingMode();
   render();
 });
+favoriteOnlyButton.addEventListener('click', () => {
+  filters.favoriteOnly = !filters.favoriteOnly;
+  clearScan();
+  saveFilters();
+  updateFilterToggle();
+  updateQuickFilters();
+  render();
+});
+marketOnlyButton.addEventListener('click', () => {
+  filters.marketOnly = !filters.marketOnly;
+  clearScan();
+  saveFilters();
+  updateFilterToggle();
+  updateQuickFilters();
+  render();
+});
+detailFavoriteButton.addEventListener('click', () => toggleFavorite(detailKindKey));
 pendingFilter.addEventListener('click', () => setPendingOnly(!pendingOnly));
 $('#pending-exit').addEventListener('click', () => setPendingOnly(false));
 
@@ -704,10 +770,11 @@ function refreshView() {
   pendingButton.hidden = !data || count === 0;
   pendingButton.textContent = `待回傳 ${count}`;
   updatePendingMode();
+  updateQuickFilters();
 }
 
-const pendingCount = () => Object.keys(pending.edits).length + pending.additions.length + Object.keys(pending.marketPrices ?? {}).length;
-const pendingClearText = () => `${pendingCount()} 筆待回傳（${Object.keys(pending.edits).length} 筆卡片修改、${pending.additions.length} 筆新增卡、${Object.keys(pending.marketPrices ?? {}).length} 筆市場價格）`;
+const pendingCount = () => Object.keys(pending.edits).length + pending.additions.length + Object.keys(pending.marketPrices ?? {}).length + Object.keys(pending.favorites ?? {}).length;
+const pendingClearText = () => `${pendingCount()} 筆待回傳（${Object.keys(pending.edits).length} 筆卡片修改、${pending.additions.length} 筆新增卡、${Object.keys(pending.marketPrices ?? {}).length} 筆市場價格、${Object.keys(pending.favorites ?? {}).length} 筆最愛）`;
 
 async function savePending(next) {
   pending = next;
@@ -885,7 +952,10 @@ function openPending() {
       addition.photo ? element('img', { className: 'pending-photo', src: addition.photo, alt: '新增卡照片' }) : '',
       element('span', { className: 'pending-changes', textContent: USER_FIELDS.map((key) => `${key}：${shown(addition[key])}`).join('；') }),
       element('button', { type: 'button', className: 'text-button', textContent: '取消這筆', onclick: async () => {
-        await savePending({ ...pending, additions: pending.additions.filter((item) => item.id !== addition.id) });
+        const key = view.rows.find((row) => row.mobileId === addition.id)?.RowKey.split('|').slice(0, 4).join('|');
+        const favorites = { ...(pending.favorites ?? {}) };
+        if (key && !view.rows.some((row) => row.mobileId !== addition.id && kindKeyFromRowKey(row.RowKey) === key)) delete favorites[key];
+        await savePending({ ...pending, additions: pending.additions.filter((item) => item.id !== addition.id), favorites });
         await refreshInfo();
         render();
         openPending();
@@ -906,11 +976,21 @@ function openPending() {
       } }),
     ]);
   });
-  $('#pending-list').replaceChildren(...items, ...additions, ...prices);
-  $('#pending-note').textContent = `${items.length} 筆卡片修改、${additions.length} 筆新增卡、${prices.length} 筆市場價格。`
+  const favorites = Object.values(pending.favorites ?? {}).map((change) => element('li', {}, [
+    element('strong', { textContent: `${change.next ? '加入' : '取消'}我的最愛：${change.kindKey}` }),
+    element('button', { type: 'button', className: 'text-button', textContent: '取消這筆', onclick: async () => {
+      const next = { ...(pending.favorites ?? {}) };
+      delete next[change.kindKey];
+      await savePending({ ...pending, favorites: next });
+      render();
+      openPending();
+    } }),
+  ]));
+  $('#pending-list').replaceChildren(...items, ...additions, ...prices, ...favorites);
+  $('#pending-note').textContent = `${items.length} 筆卡片修改、${additions.length} 筆新增卡、${prices.length} 筆市場價格、${favorites.length} 筆最愛。`
     + (pending.lastExportedAt ? `上次匯出：${formatDate(pending.lastExportedAt)}。` : '')
     + '匯出後仍會保留；確認重新匯入或還原資料時，所有待回傳都會清除。';
-  $('#pending-export').disabled = !items.length && !pending.additions.length && !prices.length;
+  $('#pending-export').disabled = !items.length && !pending.additions.length && !prices.length && !favorites.length;
   if (!pendingDialog.open) pendingDialog.showModal();
 }
 pendingButton.addEventListener('click', openPending);
@@ -922,7 +1002,7 @@ $('#pending-export').addEventListener('click', async () => {
   const stamp = `${at.getFullYear()}${pad(at.getMonth() + 1)}${pad(at.getDate())}-${pad(at.getHours())}${pad(at.getMinutes())}`;
   const exportId = `${stamp}${pad(at.getSeconds())}-${Math.random().toString(16).slice(2, 6)}`;
   const changes = buildMobileChanges(pending, {
-    base: { sourceRevision: data.sourceRevision, marketRevision: data.marketPrices?.revision ?? '', exportedAt: data.exportedAt }, exportedAt: at.toISOString(), exportId,
+    base: { sourceRevision: data.sourceRevision, marketRevision: data.marketPrices?.revision ?? '', favoritesRevision: data.favorites?.revision ?? '', exportedAt: data.exportedAt }, exportedAt: at.toISOString(), exportId,
   });
   const problems = validateMobileChanges(changes);
   if (problems.length) { $('#pending-note').textContent = `變更檔驗證失敗：${problems.slice(0, 3).join('；')}`; return; }
@@ -974,6 +1054,7 @@ $('#file').addEventListener('change', async (event) => {
     ['匯出時間', `${formatDate(parsed.exportedAt)}（${daysSince(parsed.exportedAt)} 天前）`],
     ['列數', String(parsed.rowCount)],
     ['市場價格紀錄', `${parsed.marketPrices?.records?.length ?? 0} 筆`],
+    ['我的最愛', `${parsed.favorites?.kindKeys?.length ?? 0} 種`],
     ['縮圖', `${Object.keys(parsed.thumbs).length} 張`],
     ...(diff ? [['新增', `${diff.added} 列`], ['移除', `${diff.removed} 列`], ['狀態改變', `${diff.changed} 列`]] : []),
   ];

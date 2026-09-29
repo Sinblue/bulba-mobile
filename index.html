@@ -29,6 +29,10 @@
       <label id="scan-button" class="scan-button disabled" aria-label="拍照比對卡圖" title="拍照比對卡圖">📷<input id="scan" type="file" accept="image/*" capture="environment" hidden disabled></label>
       <input id="scan-pick" type="file" accept="image/*" hidden disabled>
     </div>
+    <div class="quick-filters">
+      <button id="favorite-only" class="quick-filter" type="button" aria-pressed="false" aria-label="只看我的最愛" title="只看我的最愛" disabled><span class="quick-filter-icon favorite-filter-icon" aria-hidden="true">☆</span></button>
+      <button id="market-only" class="quick-filter" type="button" aria-pressed="false" aria-label="只看有市場價格的卡片" title="只看有市場價格的卡片" disabled><span class="quick-filter-icon market-filter-icon" aria-hidden="true">$</span></button>
+    </div>
     <label id="scan-album" class="scan-album" for="scan-pick" hidden>從相簿</label>
     <p id="scan-status" class="scan-status" hidden></p>
     <div id="pending-mode" class="pending-mode" hidden>
@@ -87,7 +91,7 @@
   <dialog id="detail" class="detail">
     <div class="detail-header">
       <strong id="detail-title"></strong>
-      <button id="detail-close" class="close-button" type="button" aria-label="關閉">×</button>
+      <div class="detail-head-actions"><button id="detail-favorite" class="favorite-star" type="button" aria-pressed="false" aria-label="加入我的最愛">☆</button><button id="detail-close" class="close-button" type="button" aria-label="關閉">×</button></div>
     </div>
     <div id="detail-body" class="detail-body"></div>
   </dialog>

@@ -15,6 +15,13 @@ h2 { margin:0; font-size:16px; }
 .search-row { display:flex; gap:8px; }
 .search { flex:1; min-width:0; min-height:44px; padding:8px 12px; border:1px solid var(--line); border-radius:10px; background:var(--surface); color:var(--text); font-size:16px; }
 .search:focus { outline:2px solid var(--accent); outline-offset:1px; }
+.quick-filters { display:flex; gap:8px; margin-top:7px; }
+.quick-filter { display:grid; place-items:center; flex:none; width:44px; height:44px; padding:0; border:1px solid var(--line); border-radius:8px; background:var(--bg); cursor:pointer; }
+.quick-filter:disabled { opacity:.5; cursor:default; }
+.quick-filter-icon { display:grid; place-items:center; width:24px; height:24px; border:1px solid var(--icon-color); border-radius:50%; background:var(--bg); color:var(--icon-color); font-size:16px; line-height:1; }
+.favorite-filter-icon { --icon-color:#F59E0B; }
+.market-filter-icon { --icon-color:#22C55E; font-size:15px; font-weight:800; }
+.quick-filter[aria-pressed="true"] .quick-filter-icon { background:var(--icon-color); color:var(--bg); }
 .filter-toggle { flex:none; min-height:44px; padding:0 14px; border:1px solid var(--line); border-radius:10px; background:var(--surface); color:var(--text); font-weight:650; cursor:pointer; }
 .filter-toggle.active { border-color:var(--accent); color:var(--accent); }
 .filters { display:grid; grid-template-columns:1fr 1fr; gap:8px 10px; margin-top:10px; }
@@ -66,12 +73,17 @@ main { padding:12px 14px 40px; }
 .group-prices:empty { display:none; }
 
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
+.tile-wrap { position:relative; min-width:0; }
 .tile { display:block; min-width:0; padding:0; overflow:hidden; border:1px solid var(--line); border-radius:10px; background:var(--surface); color:var(--text); text-align:left; cursor:pointer; }
+.tile-wrap .tile { width:100%; height:100%; }
+.favorite-star { display:grid; place-items:center; flex:none; width:24px; height:24px; padding:0; border:1px solid #F59E0B; border-radius:50%; background:var(--surface); color:#F59E0B; font-size:16px; line-height:1; cursor:pointer; }
+.favorite-star[aria-pressed="true"] { background:#F59E0B; color:var(--surface); }
+.tile-favorite { position:absolute; right:7px; bottom:7px; z-index:1; box-shadow:0 1px 5px #0005; }
 .tile:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .tile-image { display:block; width:100%; aspect-ratio:2.5 / 3.5; object-fit:contain; background:var(--img); }
 .tile-image.placeholder { display:grid; place-items:center; color:var(--muted); font-size:12px; }
-.tile-copy { position:relative; display:block; padding:8px 32px 10px 9px; }
-.tile-price-mark { position:absolute; right:7px; bottom:7px; display:grid; place-items:center; width:24px; height:24px; border-radius:50%; background:#a66b00; color:#fff; box-shadow:0 1px 4px #0005; font-size:15px; font-weight:800; line-height:1; }
+.tile-copy { position:relative; display:block; padding:8px 36px 10px 9px; }
+.tile-price-mark { position:absolute; top:7px; right:7px; display:grid; place-items:center; width:24px; height:24px; border-radius:50%; background:#22C55E; color:#fff; box-shadow:0 1px 4px #0005; font-size:15px; font-weight:800; line-height:1; }
 .tile-name { display:block; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .tile-code, .tile-tags { display:block; margin-top:2px; color:var(--muted); font-size:12px; }
 .tile-lang { font-weight:750; }
@@ -86,6 +98,7 @@ dialog { width:min(440px,calc(100vw - 24px)); max-height:calc(100vh - 24px); pad
 dialog::backdrop { background:#0008; }
 #preview form { padding:16px; }
 .detail-header { position:sticky; top:0; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 14px; background:var(--surface); border-bottom:1px solid var(--line); }
+.detail-head-actions { display:flex; flex:none; align-items:center; gap:7px; }
 .detail-header strong { min-width:0; overflow-wrap:anywhere; }
 .close-button { flex:none; border:0; background:transparent; color:var(--text); font-size:24px; line-height:1; cursor:pointer; }
 /* 詳細資料：左卡圖、右欄位（同本機目錄的唯讀欄位＋收藏欄位） */
