@@ -107,6 +107,9 @@ dialog::backdrop { background:#0008; }
 #preview form { padding:16px; }
 .detail-header { position:sticky; top:0; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 14px; background:var(--surface); border-bottom:1px solid var(--line); }
 .detail-head-actions { display:flex; flex:none; align-items:center; gap:7px; }
+.detail-nav { display:grid; place-items:center; width:32px; height:32px; padding:0; border:1px solid var(--line); border-radius:7px; background:var(--bg); color:var(--text); cursor:pointer; }
+.detail-nav:disabled { opacity:.4; cursor:default; }
+.detail-nav svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
 .detail-header strong { min-width:0; overflow-wrap:anywhere; }
 .close-button { flex:none; border:0; background:transparent; color:var(--text); font-size:24px; line-height:1; cursor:pointer; }
 /* 詳細資料：左卡圖、右欄位（同本機目錄的唯讀欄位＋收藏欄位） */

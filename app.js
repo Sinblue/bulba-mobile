@@ -23,6 +23,8 @@ const empty = $('#empty');
 const multiNote = $('#multi-note');
 const preview = $('#preview');
 const detail = $('#detail');
+const detailPrevious = $('#detail-previous');
+const detailNext = $('#detail-next');
 const filterToggle = $('#filter-toggle');
 const filterPanel = $('#filters');
 const pendingFilter = $('#f-pending');
@@ -285,7 +287,7 @@ function tileNode(kind) {
     ]),
   ]);
   if (priceMark) tile.title = '有市場價格紀錄';
-  tile.addEventListener('click', () => openDetail(kind));
+  tile.addEventListener('click', () => openDetail(kind, true));
   const favorite = element('button', { className: 'favorite-star tile-favorite', type: 'button' });
   setFavoriteButton(favorite, kind.kindKey);
   favorite.addEventListener('click', () => toggleFavorite(kind.kindKey));
@@ -299,6 +301,8 @@ const item = (label, value) => (value === '' || value == null
 const userItem = (label, value) => item(label, value === '' || value == null ? '未填' : value);
 
 let detailKindKey = '';
+let visibleKinds = [];
+let detailKinds = [];
 let marketListKindKey = '';
 const marketListDialog = $('#market-list-dialog');
 function currentMarketRecords() {
@@ -366,8 +370,12 @@ async function deleteMarketPrice(record) {
   } catch (error) { showNotice(`刪除市場價格失敗：${error.message}`); }
 }
 
-function openDetail(kind) {
+function openDetail(kind, startNavigation = false) {
+  if (startNavigation || !detail.open) detailKinds = [...visibleKinds];
   detailKindKey = kind.kindKey;
+  const index = detailKinds.findIndex((item) => item.kindKey === kind.kindKey);
+  detailPrevious.disabled = index <= 0;
+  detailNext.disabled = index < 0 || index >= detailKinds.length - 1;
   setFavoriteButton(detailFavoriteButton, kind.kindKey);
   const first = kind.rows[0];
   $('#detail-title').textContent = kind.rows.length === 1
@@ -407,6 +415,18 @@ function openDetail(kind) {
   $('#detail-body').replaceChildren(imagePanel, info);
   if (!detail.open) detail.showModal();
 }
+function navigateDetail(direction) {
+  const index = detailKinds.findIndex((kind) => kind.kindKey === detailKindKey);
+  const target = index < 0 ? undefined : detailKinds[index + direction];
+  if (!target) return;
+  const keys = new Set(target.rows.map((row) => row.RowKey));
+  const kind = buildKinds(view.rows.filter((row) => keys.has(row.RowKey)))[0];
+  if (!kind) return;
+  openDetail(kind);
+  detail.scrollTop = 0;
+}
+detailPrevious.addEventListener('click', () => navigateDetail(-1));
+detailNext.addEventListener('click', () => navigateDetail(1));
 $('#detail-close').addEventListener('click', () => detail.close());
 detail.addEventListener('click', (event) => { if (event.target === detail) detail.close(); });
 
@@ -626,6 +646,7 @@ function renderScan() {
   ]);
   results.append(head);
   if (scan.pending || scan.error) return;
+  visibleKinds = scan.groups.flatMap((group) => group.kinds);
   if (!scan.groups.length) {
     empty.textContent = '沒有比對到相近的卡圖。這不代表確定沒有收藏——可以靠近一點、避開反光再拍一次，或改用卡號／卡名搜尋。';
     empty.hidden = false;
@@ -646,6 +667,7 @@ function renderScan() {
 }
 
 function render() {
+  visibleKinds = [];
   results.replaceChildren();
   empty.hidden = true;
   multiNote.hidden = true;
@@ -663,6 +685,7 @@ function render() {
   if (!query) {
     // 瀏覽模式：依篩選與排序列出所有卡種。
     const kinds = sortKinds(buildKinds(rows), filters.sort);
+    visibleKinds = kinds;
     if (!kinds.length) {
       const label = filters.favoriteOnly && filters.marketOnly ? '最愛且有市場價格' : filters.favoriteOnly ? '最愛' : filters.marketOnly ? '有市場價格' : '';
       empty.textContent = label ? `沒有符合條件的${label}卡片。` : pendingOnly ? '目前沒有待回傳的卡。' : '沒有符合篩選條件的卡。';
@@ -677,6 +700,7 @@ function render() {
   }
 
   const result = searchCards(rows, query, pendingOnly ? pendingRows(view.rows, Object.keys(pending.favorites ?? {})) : view.rows);
+  visibleKinds = result.groups.flatMap((group) => group.kinds);
   if (!result.groups.length) {
     empty.textContent = (pendingOnly ? '待回傳的卡中沒有找到符合的卡。' : '收藏清單中沒有找到符合的卡。這不代表確定沒有收藏——請確認輸入的卡號、張數，或改用卡名搜尋。')
       + (filtered ? '（目前有套用篩選，可按「篩選」→「清除」再查一次。）' : '');
