@@ -17,6 +17,8 @@
         <div id="settings-menu" class="settings-menu">
           <button id="settings-toggle" class="settings-toggle" type="button" aria-label="設定" aria-expanded="false" aria-controls="settings-options">⚙️</button>
           <div id="settings-options" class="settings-options" hidden>
+            <button id="exchange-rates" class="settings-option" type="button">幣別匯率</button>
+            <button id="purchase-open" class="settings-option" type="button">購入統計</button>
             <button id="restore" class="settings-option" type="button" disabled>目前沒有上一份資料</button>
           </div>
         </div>
@@ -66,7 +68,8 @@
     </section>
   </header>
 
-  <main>
+  <main id="home-main">
+    <p id="result-count" class="result-count" aria-live="polite" hidden></p>
     <section id="welcome" class="welcome">
       <h2>第一次使用</h2>
       <ol>
@@ -140,6 +143,7 @@
         <label>購入日 <input name="購入日" type="date"></label>
         <label>購入價 <input name="購入價" type="number" inputmode="decimal" min="0" step="any"></label>
         <label>幣別 <select name="幣別"></select></label>
+        <label>購買商店 <input name="購買商店" type="text" maxlength="200" placeholder="未填"></label>
         <label>卡片狀態 <input name="卡片狀態" type="text" maxlength="2000" placeholder="未填"></label>
         <label class="wide">備註 <textarea name="備註" rows="3" maxlength="2000"></textarea></label>
       </div>
@@ -168,6 +172,7 @@
         <label>購入日 <input name="購入日" type="date"></label>
         <label>購入價 <input name="購入價" type="number" inputmode="decimal" min="0" step="any"></label>
         <label>幣別 <select name="幣別"></select></label>
+        <label>購買商店 <input name="購買商店" type="text" maxlength="200" placeholder="未填"></label>
         <label>卡片狀態 <input name="卡片狀態" type="text" maxlength="2000" placeholder="未填"></label>
         <label class="wide">備註 <textarea name="備註" rows="3" maxlength="2000"></textarea></label>
         <label class="wide">照片（選填，僅供電腦審核） <input name="photo" type="file" accept="image/*" capture="environment"></label>

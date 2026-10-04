@@ -1,8 +1,8 @@
 // 離線快取：只快取本站程式檔（cache-first）。卡片資料在 IndexedDB，不經這裡。
 // 更新任何程式檔後，要把 CACHE 的版本號加一，手機才會換成新版。
-const CACHE = 'bulba-shell-v29';
+const CACHE = 'bulba-shell-v32';
 const ASSETS = ['./', './index.html', './app.js', './style.css', './manifest.webmanifest', './icon.svg', './lib/mobile_format.mjs',
-  './lib/market_prices.mjs', './lib/favorites.mjs', './lib/card_match.mjs', './scan_worker.js', './vendor/opencv.js'];
+  './lib/market_prices.mjs', './lib/favorites.mjs', './lib/purchase_summary.mjs', './lib/purchase_ui.mjs', './lib/card_match.mjs', './scan_worker.js', './vendor/opencv.js'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting()));

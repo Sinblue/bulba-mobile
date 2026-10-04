@@ -11,6 +11,7 @@ import {
 import { MATCH_PARAMS, MATCH_VERSION, classifyMatches, matchGroups } from './lib/card_match.mjs';
 import { filterMarketRows, kindKeyFromRowKey, normalizeMarketRecord, pricesForKind, recordMarketDelete, recordMarketEdit } from './lib/market_prices.mjs';
 import { currentFavoriteKeys, filterFavoriteRows, recordFavoriteToggle } from './lib/favorites.mjs';
+import { mountPurchaseTools } from './lib/purchase_ui.mjs';
 
 const STALE_DAYS = 14;
 const FILTER_STORAGE = 'bulba-mobile-filters';
@@ -55,6 +56,18 @@ let marketKindKey = '';
 let editingMarket = null;
 let marketKindKeys = new Set();
 const favoriteKeys = () => currentFavoriteKeys(data?.favorites, pending);
+const purchaseTools = mountPurchaseTools({
+  home: document.querySelector('#home-main'),
+  header: document.querySelector('.top'),
+  getRows: () => view?.rows ?? [],
+  getImage: (row) => view?.thumbs[row.thumb] || '',
+  onOpen: (row, list) => {
+    const byKey = new Map(buildKinds(view.rows).map((kind) => [kind.kindKey, kind]));
+    const ordered = [...new Set(list.map((item) => kindKeyFromRowKey(item.RowKey)))].map((key) => byKey.get(key)).filter(Boolean);
+    const kind = byKey.get(kindKeyFromRowKey(row.RowKey));
+    if (kind) openDetail(kind, true, ordered, row.RowKey);
+  },
+});
 
 function setFavoriteButton(button, kindKey) {
   const selected = favoriteKeys().has(kindKey);
@@ -294,7 +307,7 @@ function tileNode(kind) {
   return element('div', { className: 'tile-wrap' }, [tile, favorite]);
 }
 
-// 詳細資料：欄位與本機目錄一致（唯讀欄位＋六個收藏欄位）；收藏欄位可在手機編輯，存成待回傳。
+// 詳細資料：欄位與本機目錄一致（唯讀欄位＋USER_FIELDS 收藏欄位）；收藏欄位可在手機編輯，存成待回傳。
 const item = (label, value) => (value === '' || value == null
   ? []
   : [element('dt', { textContent: label }), element('dd', { textContent: String(value) })]);
@@ -370,8 +383,9 @@ async function deleteMarketPrice(record) {
   } catch (error) { showNotice(`刪除市場價格失敗：${error.message}`); }
 }
 
-function openDetail(kind, startNavigation = false) {
-  if (startNavigation || !detail.open) detailKinds = [...visibleKinds];
+function openDetail(kind, startNavigation = false, navigationKinds = null, focusRowKey = '') {
+  if (navigationKinds) detailKinds = [...navigationKinds];
+  else if (startNavigation || !detail.open) detailKinds = [...visibleKinds];
   detailKindKey = kind.kindKey;
   const index = detailKinds.findIndex((item) => item.kindKey === kind.kindKey);
   detailPrevious.disabled = index <= 0;
@@ -405,7 +419,8 @@ function openDetail(kind, startNavigation = false) {
     element('dl', {}, [
       ...(kind.rows.length > 1 ? item('RowKey', row.RowKey) : []),
       ...userItem('狀態', row.狀態), ...userItem('購入日', row.購入日), ...userItem('購入價', row.購入價),
-      ...userItem('幣別', row.幣別), ...userItem('卡片狀態', row.卡片狀態), ...userItem('備註', row.備註),
+      ...userItem('幣別', row.幣別), ...userItem('購買商店', row.購買商店),
+      ...userItem('卡片狀態', row.卡片狀態), ...userItem('備註', row.備註),
     ]),
   ]));
   const info = element('div', { className: 'detail-info' }, [marketEntry(kind), cardInfo, ...copyBlocks]);
@@ -414,6 +429,13 @@ function openDetail(kind, startNavigation = false) {
     onclick: () => openAddition('copy', copySource.RowKey) }));
   $('#detail-body').replaceChildren(imagePanel, info);
   if (!detail.open) detail.showModal();
+  if (focusRowKey) {
+    const selected = copyBlocks[kind.rows.findIndex((row) => row.RowKey === focusRowKey)];
+    if (selected) {
+      selected.classList.add('purchase-selected');
+      selected.scrollIntoView({ block: 'nearest' });
+    }
+  }
 }
 function navigateDetail(direction) {
   const index = detailKinds.findIndex((kind) => kind.kindKey === detailKindKey);
@@ -628,6 +650,7 @@ for (const input of [scanInput, scanPick]) {
 }
 
 function renderScan() {
+  $('#result-count').hidden = true;
   const scan = scanResult;
   const actions = element('span', { className: 'scan-actions' }, [
     element('label', { htmlFor: 'scan', className: 'text-button', textContent: '重拍' }),
@@ -666,7 +689,15 @@ function renderScan() {
   }));
 }
 
+function updateResultCount() {
+  const keys = new Set(visibleKinds.flatMap((kind) => kind.rows.map((row) => row.RowKey)));
+  $('#result-count').textContent = `符合條件：${visibleKinds.length} 種／${keys.size} 張`;
+}
+
 function render() {
+  purchaseTools.refresh();
+  $('#result-count').hidden = !data;
+  $('#result-count').textContent = '符合條件：0 種／0 張';
   visibleKinds = [];
   results.replaceChildren();
   empty.hidden = true;
@@ -686,6 +717,7 @@ function render() {
     // 瀏覽模式：依篩選與排序列出所有卡種。
     const kinds = sortKinds(buildKinds(rows), filters.sort);
     visibleKinds = kinds;
+    updateResultCount();
     if (!kinds.length) {
       const label = filters.favoriteOnly && filters.marketOnly ? '最愛且有市場價格' : filters.favoriteOnly ? '最愛' : filters.marketOnly ? '有市場價格' : '';
       empty.textContent = label ? `沒有符合條件的${label}卡片。` : pendingOnly ? '目前沒有待回傳的卡。' : '沒有符合篩選條件的卡。';
@@ -701,6 +733,7 @@ function render() {
 
   const result = searchCards(rows, query, pendingOnly ? pendingRows(view.rows, Object.keys(pending.favorites ?? {})) : view.rows);
   visibleKinds = result.groups.flatMap((group) => group.kinds);
+  updateResultCount();
   if (!result.groups.length) {
     empty.textContent = (pendingOnly ? '待回傳的卡中沒有找到符合的卡。' : '收藏清單中沒有找到符合的卡。這不代表確定沒有收藏——請確認輸入的卡號、張數，或改用卡名搜尋。')
       + (filtered ? '（目前有套用篩選，可按「篩選」→「清除」再查一次。）' : '');
@@ -845,7 +878,7 @@ function openEdit(rowKey) {
   if (!row) return;
   editingRowKey = rowKey;
   $('#edit-title').textContent = row.Name;
-  for (const field of ['狀態', '購入日', '幣別', '卡片狀態', '備註']) editForm.elements[field].value = row[field] ?? '';
+  for (const field of ['狀態', '購入日', '幣別', '購買商店', '卡片狀態', '備註']) editForm.elements[field].value = row[field] ?? '';
   editForm.elements.購入價.value = row.購入價 === '' || row.購入價 == null ? '' : String(row.購入價);
   $('#edit-error').hidden = true;
   editDialog.showModal();
@@ -866,6 +899,7 @@ editForm.addEventListener('submit', async (event) => {
     購入價: priceText === '' ? '' : Number(priceText),
     幣別: editForm.elements.幣別.value,
     購入日: editForm.elements.購入日.value,
+    購買商店: editForm.elements.購買商店.value,
     卡片狀態: editForm.elements.卡片狀態.value,
     備註: editForm.elements.備註.value,
   };
@@ -937,7 +971,7 @@ additionForm.addEventListener('submit', async (event) => {
   const price = form.購入價.value.trim();
   const fields = {
     狀態: form.狀態.value, 購入價: price === '' ? '' : Number(price), 幣別: form.幣別.value,
-    購入日: form.購入日.value, 卡片狀態: form.卡片狀態.value, 備註: form.備註.value,
+    購入日: form.購入日.value, 購買商店: form.購買商店.value, 卡片狀態: form.卡片狀態.value, 備註: form.備註.value,
   };
   const addition = { id: crypto.randomUUID(), at: now(), type: additionMode,
     變體: form.變體.value, ...fields };
