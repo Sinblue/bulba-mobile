@@ -724,9 +724,6 @@ function render() {
       empty.hidden = false;
       return;
     }
-    const owned = rows.filter((row) => row.狀態 === '已收藏').length;
-    hint.textContent = `${pendingOnly ? '待回傳' : filtered ? '符合篩選' : '全部'} ${kinds.length} 種卡（${rows.length} 張，已收藏 ${owned}）。可輸入卡號／張數、代碼或卡名，多個詞用空白分開。`;
-    hint.hidden = false;
     results.append(element('div', { className: 'grid' }, kinds.map(tileNode)));
     return;
   }
